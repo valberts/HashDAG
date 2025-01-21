@@ -21,7 +21,7 @@
 #endif
 
 #if USE_VIDEO
-#define SCENE_DEPTH 17
+#define SCENE_DEPTH 14 // reduced scene depth to 16K
 #define REPLAY_DEPTH 17
 #define ENABLE_CHECKS 0
 #elif RECORD_VIDEO
