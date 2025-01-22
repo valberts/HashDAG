@@ -7,33 +7,38 @@
 
 namespace Utils
 {
+	// Function to count the number of set bits (population count) in a 32-bit integer.
 	HOST_DEVICE uint32 popc(uint32 a)
 	{
 #if defined(__CUDA_ARCH__)
-		return __popc(a);
+		return __popc(a); // CUDA intrinsic for population count.
 #else
 #if USE_POPC_INTRINSICS
-		return __builtin_popcount(a);
+		return __builtin_popcount(a); // GCC intrinsic for population count.
 #else // !USE_POPC_INTRINSICS
 		// Source: http://graphics.stanford.edu/~seander/bithacks.html
-		a = a - ((a >> 1) & 0x55555555);
+		// Manual population count using bit manipulation.
+		a = a - ((a >> 1) & 0x55555555); 
 		a = (a & 0x33333333) + ((a >> 2) & 0x33333333);
 		return ((a + (a >> 4) & 0xF0F0F0F) * 0x1010101) >> 24;
 #endif // ~ USE_POPC_INTRINSICS
 #endif
 	}
+	// Function to count the number of set bits (population count) in a 64-bit integer.
 	HOST_DEVICE uint32 popcll(uint64 a)
 	{
 #if defined(__CUDA_ARCH__)
-		return __popcll(a);
+		return __popcll(a); // CUDA intrinsic for population count.
 #else
 #if USE_POPC_INTRINSICS
-		return uint32(__builtin_popcountl(a));
+		return uint32(__builtin_popcountl(a)); // GCC intrinsic for population count.
 #else // !USE_POPC_INTRINSICS
+		// Combine two 32-bit population counts into one 64-bit population count.
 		return popc(uint32(a >> 32)) + popc(uint32(a & 0xFFFFFFFF));
 #endif // ~ USE_POPC_INTRINSICS
 #endif
 	}
+	// Template function to check if a specific bit is set in a 32-bit integer.
 	template<uint32 bit = 31>
 	HOST_DEVICE bool has_flag(uint32 index)
 	{
@@ -65,6 +70,7 @@ namespace Utils
 	{
 		return popc(childMask & ((1u << child) - 1u)) + 1;
 	}
+	// MurmurHash32 implementation (used for fast hashing of data).
 	HOST_DEVICE uint32 murmurhash32(uint32 h)
 	{
 		h ^= h >> 16;

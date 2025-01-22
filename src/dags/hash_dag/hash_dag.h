@@ -17,6 +17,7 @@
 #include "dags/hash_dag/hash_dag_edits.h"
 #include "dags/hash_dag/hash_dag_colors.h"
 
+// class for undo and redo functionality
 class HashDAGUndoRedo
 {
 public:
@@ -26,6 +27,7 @@ public:
 		CompressedColorLeaf previousLeaf;
 		CompressedColorLeaf newLeaf;
 	};
+    // context for single edit operation
 	struct Frame
 	{
 		void delete_frame()
@@ -211,6 +213,7 @@ private:
 	}
 };
 
+// hashdag class from basedag, where hash table is used to store the data
 struct HashDAG : BaseDAG
 {
 #if !MANUAL_VIRTUAL_MEMORY

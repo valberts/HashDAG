@@ -6,20 +6,45 @@
 #include "dags/dag_utils.h"
 #include "FastNoise.h"
 
+/**
+ * @brief A generic editor interface that can be specialized for different types of editors (e.g., BoxEditor, SphereEditor).
+ * The editor can determine if it should edit a specific voxel or region and apply changes to it.
+ *
+ * @tparam TChild The derived class type implementing specific editing logic (e.g., BoxEditor, SphereEditor).
+ */
 template<typename TChild>
 struct Editor
 {
+	/**
+	 * @brief Determines if a region should be edited based on the given path and depth.
+	 * @param path The path in the DAG.
+	 * @param depth The depth of the path in the DAG.
+	 * @return True if the region should be edited.
+	 */
     inline bool should_edit(const Path path, uint32 depth) const
     {
         const float3 start = path.as_position(depth);
         return self().should_edit_impl(start, start + make_float3(float(1u << depth)));
     }
 
+	/**
+	 * @brief Determines if a region is full based on the given path and depth.
+	 * @param path The path in the DAG.
+	 * @param depth The depth of the path in the DAG.
+	 * @return True if the region is full.
+	 */
     inline bool is_full(const Path path, uint32 depth) const
     {
         const float3 start = path.as_position(depth);
         return self().is_full_impl(start, start + make_float3(float(1u << depth)));
     }
+
+	/**
+	 * @brief Determines if a region is empty based on the given path and depth.
+	 * @param path The path in the DAG.
+	 * @param depth The depth of the path in the DAG.
+	 * @return True if the region is empty.
+	 */
     inline bool is_empty(const Path path, uint32 depth) const
     {
         const float3 start = path.as_position(depth);
@@ -54,6 +79,10 @@ private:
     }
 };
 
+/**
+ * @brief Base editor for box-shaped regions.
+ * Used by editors to define a box-shaped area for editing.
+ */
 struct BoxEditorBase
 {
 	const float radius;

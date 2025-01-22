@@ -5,12 +5,15 @@
 #include "dags/dag_utils.h"
 #include "engine.h"
 
+/// Entry point for the DAG-based engine. This program initializes the engine, loads data,
+/// and runs the main processing loop. It supports various configurations and DAG types.
 int main(int argc, char** argv)
 {
     PROFILE_FUNCTION();
 	
 	auto& engine = Engine::engine;
 
+    /// Print system configuration details.
 	printf("Using " SCENE "\n");
     printf("%d levels (resolution=%d^3)\n", MAX_LEVELS, 1 << MAX_LEVELS);
 #if ENABLE_CHECKS
@@ -20,18 +23,23 @@ int main(int argc, char** argv)
 #endif
     printf("IMAGE RESOLUTION: %ux%u\n", imageWidth, imageHeight);
 
+    /// Generate the file name for the scene data based on the depth and resolution.
     const std::string fileName = std::string(SCENE) + std::to_string(1 << (SCENE_DEPTH - 10)) + "k";
 
+    /// Load uncompressed color data if enabled.
     if (LOAD_UNCOMPRESSED_COLORS)
     {
         BasicDAGFactory::load_uncompressed_colors_from_file(engine.basicDagUncompressedColors, "data/" + fileName + ".basic_dag.uncompressed_colors.bin");
     }
+	/// Load compressed color data if enabled.
     if (LOAD_COMPRESSED_COLORS)
     {
         BasicDAGFactory::load_compressed_colors_from_file(engine.basicDagCompressedColors, "data/" + fileName + ".basic_dag.compressed_colors.variable.bin");
     }
+    /// Load the BasicDAG structure from a binary file.
     BasicDAGFactory::load_dag_from_file(engine.dagInfo, engine.basicDag, "data/" + fileName + ".basic_dag.dag.bin");
 
+    /// Fix enclosed leaves and re-save compressed colors if required (disabled by default).
 #if 0
     DAGUtils::fix_enclosed_leaves(engine.basicDag, engine.basicDagCompressedColors.enclosedLeaves, engine.basicDagCompressedColors.topLevels);
 #if 0
@@ -41,6 +49,7 @@ int main(int argc, char** argv)
 #endif
 #endif
 
+    /// If compressed colors are loaded, initialize the HashDAG and its colors from the BasicDAG.
 	if (LOAD_COMPRESSED_COLORS)
     {
         HashDAGFactory::load_from_DAG(engine.hashDag, engine.basicDag, 0x8FFFFFFF / C_pageSize / sizeof(uint32));
@@ -50,7 +59,7 @@ int main(int argc, char** argv)
 	engine.basicDagColorErrors.uncompressedColors = engine.basicDagUncompressedColors;
 	engine.basicDagColorErrors.compressedColors = engine.basicDagCompressedColors;
 
-    //engine.basicDag.free();
+    ///engine.basicDag.free();
 
 	engine.init(HEADLESS);
 #if USE_NORMAL_DAG
@@ -59,6 +68,7 @@ int main(int argc, char** argv)
 	engine.set_dag(EDag::HashDag);
 #endif
 
+    /// Uncomment this section to toggle fullscreen and load video data (disabled by default).
 //#if USE_VIDEO
 //	engine.toggle_fullscreen();
 //    engine.videoManager.load_video("./videos/" SCENE "_" VIDEO_NAME ".txt");

@@ -8,27 +8,61 @@
 
 struct DAGInfo;
 
+/**
+ * BasicDAG: Represents a basic Directed Acyclic Graph (DAG) structure for geometry storage.
+ * Provides methods for accessing nodes, leaves, and child nodes, along with utility functions.
+ */
 struct BasicDAG : BaseDAG
 {
 	StaticArray<uint32> data;
 
+	/**
+	 * Checks if the DAG is valid.
+	 * @return True if the DAG's data array is valid, false otherwise.
+	 */
 	HOST_DEVICE bool is_valid() const
 	{
 		return data.is_valid();
 	}
 
+	/**
+	 * Retrieves the index of the first node in the DAG.
+	 * @return Index of the first node.
+	 */
 	HOST_DEVICE uint32 get_first_node_index() const
 	{
 		return 0;
 	}
+
+	/**
+	 * Retrieves the node value at a specific level and index.
+	 * @param level The level of the node.
+	 * @param index The index of the node.
+	 * @return The value of the node.
+	 */
 	HOST_DEVICE uint32 get_node(uint32 level, uint32 index) const
 	{
 		return data[index];
 	}
+
+	/**
+	  * Retrieves the index of a child node.
+	  * @param level The level of the current node.
+	  * @param index The index of the current node.
+	  * @param childMask The mask representing child presence.
+	  * @param child The specific child to access.
+	  * @return Index of the child node.
+	  */
 	HOST_DEVICE uint32 get_child_index(uint32 level, uint32 index, uint8 childMask, uint8 child) const
 	{
 		return data[index + Utils::child_offset(childMask, child)];
 	}
+
+	/**
+	  * Retrieves a leaf node at the specified index.
+	  * @param index Index of the leaf.
+	  * @return The leaf structure containing leaf data.
+	  */
 	HOST_DEVICE Leaf get_leaf(uint32 index) const
 	{
 		return { data[index], data[index + 1] };
@@ -44,21 +78,40 @@ struct BasicDAG : BaseDAG
     }
 };
 
+/**
+ * BasicDAGColorsBase: Base class for handling color information in a DAG.
+ * Includes methods for retrieving leaf counts and managing enclosed leaves.
+ */
 struct BasicDAGColorsBase : BaseDAGColors
 {
 	// Node count is stored into enclosedLeaves
 	uint32 topLevels = 0;
 	StaticArray<EnclosedLeavesType> enclosedLeaves;
 
+	/**
+	 * Retrieves the number of levels in the color tree.
+	 * @return The number of levels (always 0 in the base implementation).
+	 */
 	HOST_DEVICE uint32 get_color_tree_levels() const
 	{
 		return 0;
 	}
+
+	/**
+	 * Retrieves the child index (not implemented in this base class).
+	 */
 	HOST_DEVICE uint32 get_child_index(uint32 level, uint32 index, uint8 child) const
 	{
 		check(false);
 		return 0;
 	}
+
+	/**
+	 * Gets the count of leaves for a given level and node.
+	 * @param level The level of the node.
+	 * @param node The node index.
+	 * @return The number of leaves.
+	 */
 	HOST_DEVICE uint64 get_leaves_count(uint32 level, uint32 node) const
 	{
 		const uint32 upperBits = node >> 8;

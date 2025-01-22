@@ -15,6 +15,7 @@
 
 #include "glfont.h"
 
+/// Available DAG types
 enum class EDag
 {
     BasicDagUncompressedColors,
@@ -28,6 +29,7 @@ constexpr uint32 CNumDags = 4;
 std::string dag_to_string(EDag dag);
 std::string tool_to_string(ETool tool);
 
+/// Main engine class responsible for managing DAGs, camera views, and replay functionality
 class Engine
 {
 public:
@@ -61,6 +63,7 @@ public:
 
     StatsRecorder statsRecorder;
 
+    /// Structure to store configuration options for editing and tool use
     struct EditConfig
     {
         EDag currentDag = EDag::HashDag;
@@ -74,6 +77,7 @@ public:
     };
     EditConfig config;
 
+    /// Template function to perform editing on the DAG
     template<typename T, typename... TArgs>
     void edit(TArgs&&... Args)
     {
@@ -84,7 +88,7 @@ public:
 
     	BasicStats stats;
     	
-        // is disabled inside the function
+        /// is disabled inside the function
         hashDag.data.prefetch();
     	
         stats.start_work("creating edit tool");
@@ -110,6 +114,7 @@ public:
 	void toggle_fullscreen();
 
 private:
+    /// Internal structure to track the input state (keyboard, mouse, etc.)
     struct InputState
     {
         std::vector<bool> keys = std::vector<bool>(GLFW_KEY_LAST + 1, false);
@@ -118,32 +123,32 @@ private:
         double mousePosY = 0;
     };
 
-    GLFWwindow* window = nullptr;
-    GLuint image = 0;
+    GLFWwindow* window = nullptr;  /// GLFW window handle
+    GLuint image = 0;  /// OpenGL texture handle
 
-    InputState state;
+    InputState state;  /// Current input state
 
-    GLuint programID = 0;
-    GLint textureID = 0;
-	GLuint fsvao = 0;
+    GLuint programID = 0;  /// OpenGL program ID
+    GLint textureID = 0;  /// OpenGL texture ID
+    GLuint fsvao = 0;  /// OpenGL full-screen quad VAO
 
-	double dt = 0;
-	bool headLess = false;
-    bool firstReplay = true;
-    bool printMemoryStats = false;
-    bool shadows = true;
-    float shadowBias = 1;
-    float fogDensity = 0;
-	bool showUI = true;
-	float swirlPeriod = 100;
-	bool enableSwirl = true;
-	bool fullscreen = false;
-	Vector3 transformRotation = { 0, 0, 0 };
-	float transformScale = 1;
-    double time = 0;
-	uint32 frameIndex = 0;
-    std::unique_ptr<DAGTracer> tracer;
-    ReplayManager replayWriter;
+    double dt = 0;  /// Delta time for each frame
+    bool headLess = false;  /// Flag for headless mode
+    bool firstReplay = true;  /// Flag for the first replay
+    bool printMemoryStats = false;  /// Flag to print memory stats
+    bool shadows = true;  /// Enable shadows
+    float shadowBias = 1;  /// Shadow bias for rendering
+    float fogDensity = 0;  /// Fog density for rendering
+    bool showUI = true;  /// Flag to show the UI
+    float swirlPeriod = 100;  /// Swirl period for special effects
+    bool enableSwirl = true;  /// Enable swirl effect
+    bool fullscreen = false;  /// Fullscreen mode
+    Vector3 transformRotation = { 0, 0, 0 };  /// Camera rotation
+    float transformScale = 1;  /// Camera scale
+    double time = 0;  /// Global time
+    uint32 frameIndex = 0;  /// Frame index for tracking frames
+    std::unique_ptr<DAGTracer> tracer;  /// DAG tracing functionality
+    ReplayManager replayWriter;  /// Manages replay writing
 
 	glf::Context* fontctx = nullptr;
 	glf::Buffer* dynamicText = nullptr;
