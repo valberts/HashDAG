@@ -10,7 +10,6 @@ struct DAGInfo;
 /// Factory class for handling operations related to HashDAG.
 /// It provides methods to load data from BasicDAG, load colors, and save/load the DAG to/from a file.
 struct HashDAGFactory
-struct HashDAGFactory
 {
 	static void load_from_DAG(
 		HashDAG& outDag,
