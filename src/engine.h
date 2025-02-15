@@ -24,6 +24,11 @@ enum class EDag
     HashDag
 };
 
+enum class RenderMode {
+    Default,        // Existing rendering
+    MarchingCubes   // Marching cubes rendering
+};
+
 constexpr uint32 CNumDags = 4;
 
 std::string dag_to_string(EDag dag);
@@ -34,6 +39,8 @@ class Engine
 {
 public:
     static Engine engine;
+
+    RenderMode renderMode = RenderMode::Default;
 
     BasicDAG basicDag;
     HashDAG hashDag;

@@ -113,6 +113,12 @@ void Engine::key_callback_impl(int key, int scancode, int action, int mods)
 
 	if (action == GLFW_PRESS || action == GLFW_REPEAT)
 	{
+		if (key == GLFW_KEY_T)
+		{
+			renderMode = (renderMode == RenderMode::Default) ? RenderMode::MarchingCubes : RenderMode::Default;
+			printf("Render Mode switched to: %s\n",
+				(renderMode == RenderMode::Default) ? "Default" : "MarchingCubes");
+		}
 		if (key == GLFW_KEY_M)
 		{
 			printMemoryStats = !printMemoryStats;
@@ -398,6 +404,7 @@ void Engine::scroll_callback_impl(double xoffset, double yoffset)
 	config.radius = std::max(config.radius, 0.f);
 }
 
+// main update function
 void Engine::tick()
 {
 	PROFILE_FUNCTION();
@@ -412,7 +419,10 @@ void Engine::tick()
 
 	videoManager.tick(*this);
 
-	// Controls
+	// --- Camera and Replay Controls ---
+	// Handle key inputs to change camera view or record replay actions.
+	// Several hardcoded camera views (using keypad numbers) allow quick jumps.
+	// Also handles movement (WASD, space, control) and rotation via arrow keys or E/Q.
     if (replayReader.is_empty())
     {
         if (state.keys[GLFW_KEY_KP_0])
@@ -532,6 +542,7 @@ void Engine::tick()
         }
 	}
 
+	// Smoothly interpolate camera to the target view.
     if (moveToTarget)
     {
         targetLerpTime = clamp(targetLerpTime + targetLerpSpeed * dt, 0., 1.);
@@ -539,6 +550,7 @@ void Engine::tick()
         view.rotation = Matrix3x3::FromQuaternion(Quaternion::Slerp(Matrix3x3::ToQuaternion(initialView.rotation), Matrix3x3::ToQuaternion(targetView.rotation), targetLerpTime));
     }
 
+	// Replay management: recording or playing back actions.
 	if (replayReader.is_empty())
 	{
 		// Save position/rotation
@@ -572,6 +584,8 @@ void Engine::tick()
         }
 	}
 
+	// --- Voxel Data Processing ---
+	// Resolve paths: determining which voxel is under the mouse.
 	double pathsTime = 0;
 	switch (config.currentDag)
 	{
@@ -600,6 +614,7 @@ void Engine::tick()
 #endif
     }
 
+	// Resolve colors: update the colors for the current voxel configuration.
     double colorsTime = 0;
 	const uint32 debugColorsIndexLevel = basicDag.levels - 2 - config.debugColorsIndexLevel;
 	const ToolInfo toolInfo
@@ -630,6 +645,7 @@ void Engine::tick()
 	}
 	statsRecorder.report("colors", colorsTime);
 
+	// Resolve shadows: if enabled, calculate shadows and fog effects.
 	double shadowsTime = 0;
     if (shadows && ENABLE_SHADOWS)
     {
@@ -647,10 +663,17 @@ void Engine::tick()
     }
 	statsRecorder.report("shadows", shadowsTime);
 
+	// --- Editing ---
+	// If the mouse buttons are pressed and a tool is selected,
+	// perform an edit on the voxel data (using a variety of tools like SphereEditor, BoxEditor, etc.)
+	// Each editing action is recorded for replay.
     if (config.currentDag == EDag::HashDag && replayReader.is_empty())
     {
         if (state.mouse[GLFW_MOUSE_BUTTON_LEFT] || state.mouse[GLFW_MOUSE_BUTTON_RIGHT])
         {
+			// Determine tool-specific actions, e.g., Sphere, Cube, Copy, Fill, etc.
+			// Each tool triggers a call to the templated 'edit<>()' function,
+			// which applies the changes to the DAG, updates the GPU data, and records the action.
             if (config.tool == ETool::CubeCopy && state.mouse[GLFW_MOUSE_BUTTON_RIGHT])
             {
                 if (state.keys[GLFW_KEY_LEFT_SHIFT])
@@ -932,8 +955,10 @@ void Engine::loop_graphics()
 	{
 		MARK_FRAME();
 		
+		// Update the mouse cursor position.
         glfwGetCursorPos(window, &state.mousePosX, &state.mousePosY);
 
+		// Update simulation and voxel processing.
 		tick();
 
         glfwSetWindowTitle(window, "HashDag");
@@ -941,26 +966,32 @@ void Engine::loop_graphics()
 		// Clear the screen
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		// Use our shader
-		glUseProgram(programID);
+		if (renderMode == RenderMode::Default) {
+			// Use our shader
+			glUseProgram(programID);
 
-		// Send our transformation to the currently bound shader,
-		// in the "MVP" uniform
-		//glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
+			// Send our transformation to the currently bound shader,
+			// in the "MVP" uniform
+			//glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
 
-		// Bind our texture in Texture Unit 0
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, image);
+			// Bind our texture in Texture Unit 0
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, image);
 
-		// Set our "myTextureSampler" sampler to use Texture Unit 0
-		glUniform1i(textureID, 0);
+			// Set our "myTextureSampler" sampler to use Texture Unit 0
+			glUniform1i(textureID, 0);
 
-		// Draw the triangle !
-		glBindVertexArray( fsvao );
-		glDrawArrays(GL_TRIANGLES, 0, 12 * 3); // 12*3 indices starting at 0 -> 12 triangles
-		
-		glBindVertexArray( 0 );
-		glUseProgram( 0 );
+			// Draw the triangle !
+			glBindVertexArray(fsvao);
+			glDrawArrays(GL_TRIANGLES, 0, 12 * 3); // 12*3 indices starting at 0 -> 12 triangles
+
+			glBindVertexArray(0);
+			glUseProgram(0);
+		}
+		else if (renderMode == RenderMode::MarchingCubes) {
+
+		}
+
 
 		// 2D stuff
 		glDisable( GL_DEPTH_TEST );

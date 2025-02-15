@@ -11,9 +11,10 @@ int main(int argc, char** argv)
 {
     PROFILE_FUNCTION();
 	
+    // initialize engine singleton
 	auto& engine = Engine::engine;
 
-    /// Print system configuration details.
+    /// system config
 	printf("Using " SCENE "\n");
     printf("%d levels (resolution=%d^3)\n", MAX_LEVELS, 1 << MAX_LEVELS);
 #if ENABLE_CHECKS
@@ -23,7 +24,7 @@ int main(int argc, char** argv)
 #endif
     printf("IMAGE RESOLUTION: %ux%u\n", imageWidth, imageHeight);
 
-    /// Generate the file name for the scene data based on the depth and resolution.
+    /// get proper filename
     const std::string fileName = std::string(SCENE) + std::to_string(1 << (SCENE_DEPTH - 10)) + "k";
 
     /// Load uncompressed color data if enabled.
@@ -60,7 +61,8 @@ int main(int argc, char** argv)
 	engine.basicDagColorErrors.compressedColors = engine.basicDagCompressedColors;
 
     ///engine.basicDag.free();
-
+    
+    // either use basic dag or hash dag
 	engine.init(HEADLESS);
 #if USE_NORMAL_DAG
 	engine.set_dag(EDag::BasicDagCompressedColors);
