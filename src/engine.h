@@ -15,6 +15,8 @@
 
 #include "glfont.h"
 
+#include "marching_cubes.h"
+
 /// Available DAG types
 enum class EDag
 {
@@ -138,6 +140,16 @@ private:
     GLuint programID = 0;  /// OpenGL program ID
     GLint textureID = 0;  /// OpenGL texture ID
     GLuint fsvao = 0;  /// OpenGL full-screen quad VAO
+
+    // Marching cubes stuff
+    MarchingCubes::MCMesh mcMesh;
+    GLuint mcVAO = 0;
+    GLuint mcVBO = 0;
+    GLuint mcIBO = 0; 
+    GLuint mcProgramID = 0;
+    void init_marching_cubes();
+    void update_marching_cubes();
+    void render_marching_cubes();
 
     double dt = 0;  /// Delta time for each frame
     bool headLess = false;  /// Flag for headless mode
