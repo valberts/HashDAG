@@ -292,16 +292,4 @@ namespace MarchingCubes
                                    {0, 9, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
                                    {0, 3, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
                                    {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
-
-    template <typename TDAG>
-    void generate_mesh(const TDAG &dag, MCMesh &mesh, float isoLevel)
-    {
-        // Clear existing mesh data
-        mesh.clear();
-
-        // Placeholder - will implement actual mesh generation later
-        // 1. Extracting voxel data from the DAG
-        // 2. Running the marching cubes algorithm on this data
-        // 3. Generating vertices and triangles
-    }
 }

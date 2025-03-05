@@ -26,9 +26,10 @@ enum class EDag
     HashDag
 };
 
-enum class RenderMode {
-    Default,        // Existing rendering
-    MarchingCubes   // Marching cubes rendering
+enum class RenderMode
+{
+    Default,      // Existing rendering
+    MarchingCubes // Marching cubes rendering
 };
 
 constexpr uint32 CNumDags = 4;
@@ -87,23 +88,23 @@ public:
     EditConfig config;
 
     /// Template function to perform editing on the DAG
-    template<typename T, typename... TArgs>
-    void edit(TArgs&&... Args)
+    template <typename T, typename... TArgs>
+    void edit(TArgs &&...Args)
     {
         PROFILE_FUNCTION();
-    	
-        lastEditTimestamp = statsRecorder.get_frame_timestamp();
-    	lastEditFrame = frameIndex;
 
-    	BasicStats stats;
-    	
+        lastEditTimestamp = statsRecorder.get_frame_timestamp();
+        lastEditFrame = frameIndex;
+
+        BasicStats stats;
+
         /// is disabled inside the function
         hashDag.data.prefetch();
-    	
+
         stats.start_work("creating edit tool");
         auto tool = T(std::forward<TArgs>(Args)...);
         stats.flush(statsRecorder);
-    	
+
         stats.start_work("total edits");
         hashDag.edit_threads(tool, hashDagColors, undoRedo, statsRecorder);
         stats.flush(statsRecorder);
@@ -120,7 +121,7 @@ public:
     void loop();
     void destroy();
 
-	void toggle_fullscreen();
+    void toggle_fullscreen();
 
 private:
     /// Internal structure to track the input state (keyboard, mouse, etc.)
@@ -132,58 +133,48 @@ private:
         double mousePosY = 0;
     };
 
-    GLFWwindow* window = nullptr;  /// GLFW window handle
-    GLuint image = 0;  /// OpenGL texture handle
+    GLFWwindow *window = nullptr; /// GLFW window handle
+    GLuint image = 0;             /// OpenGL texture handle
 
-    InputState state;  /// Current input state
+    InputState state; /// Current input state
 
-    GLuint programID = 0;  /// OpenGL program ID
+    GLuint programID = 0; /// OpenGL program ID
     GLint textureID = 0;  /// OpenGL texture ID
-    GLuint fsvao = 0;  /// OpenGL full-screen quad VAO
+    GLuint fsvao = 0;     /// OpenGL full-screen quad VAO
 
-    // Marching cubes stuff
-    MarchingCubes::MCMesh mcMesh;
-    GLuint mcVAO = 0;
-    GLuint mcVBO = 0;
-    GLuint mcIBO = 0; 
-    GLuint mcProgramID = 0;
-    void init_marching_cubes();
-    void update_marching_cubes();
-    void render_marching_cubes();
+    double dt = 0;                         /// Delta time for each frame
+    bool headLess = false;                 /// Flag for headless mode
+    bool firstReplay = true;               /// Flag for the first replay
+    bool printMemoryStats = false;         /// Flag to print memory stats
+    bool shadows = true;                   /// Enable shadows
+    float shadowBias = 1;                  /// Shadow bias for rendering
+    float fogDensity = 0;                  /// Fog density for rendering
+    bool showUI = true;                    /// Flag to show the UI
+    float swirlPeriod = 100;               /// Swirl period for special effects
+    bool enableSwirl = true;               /// Enable swirl effect
+    bool fullscreen = false;               /// Fullscreen mode
+    Vector3 transformRotation = {0, 0, 0}; /// Camera rotation
+    float transformScale = 1;              /// Camera scale
+    double time = 0;                       /// Global time
+    uint32 frameIndex = 0;                 /// Frame index for tracking frames
+    std::unique_ptr<DAGTracer> tracer;     /// DAG tracing functionality
+    ReplayManager replayWriter;            /// Manages replay writing
 
-    double dt = 0;  /// Delta time for each frame
-    bool headLess = false;  /// Flag for headless mode
-    bool firstReplay = true;  /// Flag for the first replay
-    bool printMemoryStats = false;  /// Flag to print memory stats
-    bool shadows = true;  /// Enable shadows
-    float shadowBias = 1;  /// Shadow bias for rendering
-    float fogDensity = 0;  /// Fog density for rendering
-    bool showUI = true;  /// Flag to show the UI
-    float swirlPeriod = 100;  /// Swirl period for special effects
-    bool enableSwirl = true;  /// Enable swirl effect
-    bool fullscreen = false;  /// Fullscreen mode
-    Vector3 transformRotation = { 0, 0, 0 };  /// Camera rotation
-    float transformScale = 1;  /// Camera scale
-    double time = 0;  /// Global time
-    uint32 frameIndex = 0;  /// Frame index for tracking frames
-    std::unique_ptr<DAGTracer> tracer;  /// DAG tracing functionality
-    ReplayManager replayWriter;  /// Manages replay writing
+    glf::Context *fontctx = nullptr;
+    glf::Buffer *dynamicText = nullptr;
+    glf::Buffer *staticText = nullptr;
 
-	glf::Context* fontctx = nullptr;
-	glf::Buffer* dynamicText = nullptr;
-	glf::Buffer* staticText = nullptr;
+    struct Timings
+    {
+        double pathsTime = 0;
+        double colorsTime = 0;
+        double shadowsTime = 0;
+        double totalTime = 0;
+    };
+    Timings timings;
 
-	struct Timings
-	{
-		double pathsTime = 0;
-		double colorsTime = 0;
-		double shadowsTime = 0;
-		double totalTime = 0;
-	};
-	Timings timings;
-
-	uint32 lastEditTimestamp = 0;
-	uint32 lastEditFrame = 0;
+    uint32 lastEditTimestamp = 0;
+    uint32 lastEditFrame = 0;
 
     bool is_dag_valid(EDag dag) const;
     void next_dag();
@@ -193,15 +184,15 @@ private:
     void mouse_callback_impl(int button, int action, int mods);
     void scroll_callback_impl(double xoffset, double yoffset);
 
-    static void key_callback(GLFWwindow*, int key, int scancode, int action, int mods)
+    static void key_callback(GLFWwindow *, int key, int scancode, int action, int mods)
     {
         Engine::engine.key_callback_impl(key, scancode, action, mods);
     }
-    static void mouse_callback(GLFWwindow*, int button, int action, int mods)
+    static void mouse_callback(GLFWwindow *, int button, int action, int mods)
     {
         Engine::engine.mouse_callback_impl(button, action, mods);
     }
-    static void scroll_callback(GLFWwindow*, double xoffset, double yoffset)
+    static void scroll_callback(GLFWwindow *, double xoffset, double yoffset)
     {
         Engine::engine.scroll_callback_impl(xoffset, yoffset);
     }
