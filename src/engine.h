@@ -24,6 +24,7 @@ enum class EDag
     HashDag
 };
 
+/// Rendering mode options
 enum class RenderMode
 {
     Default,      // Existing rendering
@@ -32,17 +33,22 @@ enum class RenderMode
 
 constexpr uint32 CNumDags = 4;
 
+/// String representation of DAG type
 std::string dag_to_string(EDag dag);
+
+/// String representation of tool type
 std::string tool_to_string(ETool tool);
 
 /// Main engine class responsible for managing DAGs, camera views, and replay functionality
 class Engine
 {
 public:
-    static Engine engine;
+    //-------------------------------------------------------------------------
+    // Core Engine Members
+    //-------------------------------------------------------------------------
+    static Engine engine; /// Singleton instance
 
-    RenderMode renderMode = RenderMode::Default;
-
+    /// DAG data structures
     BasicDAG basicDag;
     HashDAG hashDag;
     BasicDAGCompressedColors basicDagCompressedColors;
@@ -51,14 +57,21 @@ public:
     HashDAGColors hashDagColors;
     HashDAGUndoRedo undoRedo;
     DAGInfo dagInfo;
-    CameraView view;
 
-    CameraView targetView;
-    double targetLerpSpeed = 1;
-    CameraView initialView;
-    bool moveToTarget = false;
-    double targetLerpTime = 0;
+    /// Rendering configuration
+    RenderMode renderMode = RenderMode::Default;
 
+    //-------------------------------------------------------------------------
+    // Camera & View Management
+    //-------------------------------------------------------------------------
+    CameraView view;            /// Current camera view
+    CameraView targetView;      /// Target camera view for smooth transitions
+    CameraView initialView;     /// Initial camera view for transitions
+    bool moveToTarget = false;  /// Flag to enable camera transition
+    double targetLerpTime = 0;  /// Current interpolation time
+    double targetLerpSpeed = 1; /// Speed of camera transition
+
+    /// Initialize camera transition to target view
     inline void init_target_lerp()
     {
         moveToTarget = true;
@@ -66,11 +79,16 @@ public:
         targetLerpTime = 0;
     }
 
-    ReplayManager replayReader;
-    VideoManager videoManager;
+    //-------------------------------------------------------------------------
+    // Replay & Recording
+    //-------------------------------------------------------------------------
+    ReplayManager replayReader;  /// Manages replay loading and playback
+    VideoManager videoManager;   /// Manages video recording and playback
+    StatsRecorder statsRecorder; /// Records statistics for benchmarking
 
-    StatsRecorder statsRecorder;
-
+    //-------------------------------------------------------------------------
+    // Configuration & State
+    //-------------------------------------------------------------------------
     /// Structure to store configuration options for editing and tool use
     struct EditConfig
     {
@@ -84,6 +102,24 @@ public:
         uint3 path;
     };
     EditConfig config;
+
+    //-------------------------------------------------------------------------
+    // Public Interface Methods
+    //-------------------------------------------------------------------------
+    /// Initialize the engine with headless mode flag
+    void init(bool headLess);
+
+    /// Run the main loop (either graphics or headless)
+    void loop();
+
+    /// Clean up resources
+    void destroy();
+
+    /// Set the current DAG type
+    void set_dag(EDag dag);
+
+    /// Toggle between fullscreen and windowed mode
+    void toggle_fullscreen();
 
     /// Template function to perform editing on the DAG
     template <typename T, typename... TArgs>
@@ -113,15 +149,11 @@ public:
 
         statsRecorder.report("radius", tool.radius);
     }
-    void set_dag(EDag dag);
-
-    void init(bool headLess);
-    void loop();
-    void destroy();
-
-    void toggle_fullscreen();
 
 private:
+    //-------------------------------------------------------------------------
+    // Input & State Management
+    //-------------------------------------------------------------------------
     /// Internal structure to track the input state (keyboard, mouse, etc.)
     struct InputState
     {
@@ -130,16 +162,49 @@ private:
         double mousePosX = 0;
         double mousePosY = 0;
     };
-
-    GLFWwindow *window = nullptr; /// GLFW window handle
-    GLuint image = 0;             /// OpenGL texture handle
-
     InputState state; /// Current input state
 
-    GLuint programID = 0; /// OpenGL program ID
-    GLint textureID = 0;  /// OpenGL texture ID
-    GLuint fsvao = 0;     /// OpenGL full-screen quad VAO
+    /// Input callback handlers
+    void key_callback_impl(int key, int scancode, int action, int mods);
+    void mouse_callback_impl(int button, int action, int mods);
+    void scroll_callback_impl(double xoffset, double yoffset);
 
+    /// Static callback functions for GLFW events
+    static void key_callback(GLFWwindow *, int key, int scancode, int action, int mods)
+    {
+        Engine::engine.key_callback_impl(key, scancode, action, mods);
+    }
+    static void mouse_callback(GLFWwindow *, int button, int action, int mods)
+    {
+        Engine::engine.mouse_callback_impl(button, action, mods);
+    }
+    static void scroll_callback(GLFWwindow *, double xoffset, double yoffset)
+    {
+        Engine::engine.scroll_callback_impl(xoffset, yoffset);
+    }
+
+    //-------------------------------------------------------------------------
+    // DAG Management
+    //-------------------------------------------------------------------------
+    bool is_dag_valid(EDag dag) const;
+    void next_dag();
+    void previous_dag();
+
+    //-------------------------------------------------------------------------
+    // Graphics Resources
+    //-------------------------------------------------------------------------
+    GLFWwindow *window = nullptr;       /// GLFW window handle
+    GLuint image = 0;                   /// OpenGL texture handle
+    GLuint programID = 0;               /// OpenGL program ID
+    GLint textureID = 0;                /// OpenGL texture ID
+    GLuint fsvao = 0;                   /// OpenGL full-screen quad VAO
+    glf::Context *fontctx = nullptr;    /// Font rendering context
+    glf::Buffer *dynamicText = nullptr; /// Dynamic text buffer
+    glf::Buffer *staticText = nullptr;  /// Static text buffer
+
+    //-------------------------------------------------------------------------
+    // Engine State
+    //-------------------------------------------------------------------------
     double dt = 0;                         /// Delta time for each frame
     bool headLess = false;                 /// Flag for headless mode
     bool firstReplay = true;               /// Flag for the first replay
@@ -158,10 +223,6 @@ private:
     std::unique_ptr<DAGTracer> tracer;     /// DAG tracing functionality
     ReplayManager replayWriter;            /// Manages replay writing
 
-    glf::Context *fontctx = nullptr;
-    glf::Buffer *dynamicText = nullptr;
-    glf::Buffer *staticText = nullptr;
-
     struct Timings
     {
         double pathsTime = 0;
@@ -169,36 +230,68 @@ private:
         double shadowsTime = 0;
         double totalTime = 0;
     };
-    Timings timings;
+    Timings timings; /// Timing measurements for profiling
 
-    uint32 lastEditTimestamp = 0;
-    uint32 lastEditFrame = 0;
+    uint32 lastEditTimestamp = 0; /// Timestamp of last edit operation
+    uint32 lastEditFrame = 0;     /// Frame index of last edit operation
 
-    bool is_dag_valid(EDag dag) const;
-    void next_dag();
-    void previous_dag();
-
-    void key_callback_impl(int key, int scancode, int action, int mods);
-    void mouse_callback_impl(int button, int action, int mods);
-    void scroll_callback_impl(double xoffset, double yoffset);
-
-    static void key_callback(GLFWwindow *, int key, int scancode, int action, int mods)
-    {
-        Engine::engine.key_callback_impl(key, scancode, action, mods);
-    }
-    static void mouse_callback(GLFWwindow *, int button, int action, int mods)
-    {
-        Engine::engine.mouse_callback_impl(button, action, mods);
-    }
-    static void scroll_callback(GLFWwindow *, double xoffset, double yoffset)
-    {
-        Engine::engine.scroll_callback_impl(xoffset, yoffset);
-    }
-
+    //-------------------------------------------------------------------------
+    // Core Engine Update Loop
+    //-------------------------------------------------------------------------
+    /// Main update function
     void tick();
 
-    void init_graphics();
+    /// Core engine subsystems
+    void handleCameraAndReplayControls();
+    void handleCameraPresets();
+    void handleCameraMovement();
+    void handleReplayCompletion();
 
+    void processVoxelData();
+    double resolveVoxelPaths();
+    void updateMousePath();
+    double resolveVoxelColors();
+    double resolveVoxelShadows();
+
+    void processEditing();
+    void applyEditingTool();
+    void updateTimingsAndStats();
+    void recordReplayStats();
+
+    //-------------------------------------------------------------------------
+    // Graphics & Rendering
+    //-------------------------------------------------------------------------
+    /// Graphics initialization
+    void init_graphics();
+    void initializeGLFW();
+    void initializeGLEW();
+    void setupOpenGLState();
+    void loadFonts();
+    void createFullScreenQuad();
+
+    /// Main loop and frame processing
     void loop_headless();
     void loop_graphics();
+    void processFrame();
+    void pollInputs();
+    void renderFrame();
+    void renderMainScene();
+    void renderUI();
+    void renderUIElements();
+
+    /// Template rendering functions for UI components
+    template <typename FormatterFunc>
+    void renderToolSpecificUI(FormatterFunc &F, float hx, float dx, float &y);
+
+    template <typename FormatterFunc>
+    void renderTimingStatistics(FormatterFunc &F, float hx, float sx, float dx, float &y);
+
+    template <typename FormatterFunc>
+    void renderMemoryStatistics(FormatterFunc &F, float hx, float sx, float dx, float &y);
+
+    template <typename FormatterFunc>
+    void renderEditStatistics(FormatterFunc &F, float hx, float sx, float dx, float &y);
+
+    /// Check if the application should exit
+    bool shouldExitApplication();
 };
