@@ -347,3 +347,5 @@ cmake-build-debug/
 cmake-build-release/
 profiling/
 data/
+
+marching-cubes/
