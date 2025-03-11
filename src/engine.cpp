@@ -966,32 +966,26 @@ void Engine::loop_graphics()
 		// Clear the screen
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		if (renderMode == RenderMode::Default) {
-			// Use our shader
-			glUseProgram(programID);
+		// Use our shader
+		glUseProgram(programID);
 
-			// Send our transformation to the currently bound shader,
-			// in the "MVP" uniform
-			//glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
+		// Send our transformation to the currently bound shader,
+		// in the "MVP" uniform
+		//glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
 
-			// Bind our texture in Texture Unit 0
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, image);
+		// Bind our texture in Texture Unit 0
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, image);
 
-			// Set our "myTextureSampler" sampler to use Texture Unit 0
-			glUniform1i(textureID, 0);
+		// Set our "myTextureSampler" sampler to use Texture Unit 0
+		glUniform1i(textureID, 0);
 
-			// Draw the triangle !
-			glBindVertexArray(fsvao);
-			glDrawArrays(GL_TRIANGLES, 0, 12 * 3); // 12*3 indices starting at 0 -> 12 triangles
+		// Draw the triangle !
+		glBindVertexArray(fsvao);
+		glDrawArrays(GL_TRIANGLES, 0, 12 * 3); // 12*3 indices starting at 0 -> 12 triangles
 
-			glBindVertexArray(0);
-			glUseProgram(0);
-		}
-		else if (renderMode == RenderMode::MarchingCubes) {
-
-		}
-
+		glBindVertexArray(0);
+		glUseProgram(0);
 
 		// 2D stuff
 		glDisable( GL_DEPTH_TEST );

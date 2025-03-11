@@ -88,6 +88,6 @@ add_executable(DAG_edits_demo
 		src/script_definitions.h
 		src/glfont.h
 		src/glfont.cpp
-		src/fontstash.cpp "src/marching_cubes.h" "src/marching_cubes.cpp")
+		src/fontstash.cpp)
 
 target_link_libraries(DAG_edits_demo ${CUDA_LIBRARIES} ${GLEW_LIBRARIES} -lglfw -lGL)
