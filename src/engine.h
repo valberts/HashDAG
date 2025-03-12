@@ -27,8 +27,8 @@ enum class EDag
 /// Rendering mode options
 enum class RenderMode
 {
-    Default,      // Existing rendering
-    MarchingCubes // Marching cubes rendering
+    Default,       // Existing rendering
+    MarchingCubes, // Marching cubes rendering
 };
 
 constexpr uint32 CNumDags = 4;

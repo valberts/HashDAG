@@ -1521,6 +1521,29 @@ void Engine::renderEditStatistics(FormatterFunc &F, float hx, float sx, float dx
     y -= 24.f;
     F(sx, y, EFmt::glow, "Num Nodes", dx, count_(statsRecorder.get_value_in_frame(lastEditTimestamp, "num nodes")));
     y -= 24.f;
+
+    // Add camera information section
+    F(hx, y, EFmt::large, "Camera", -1.f, nullptr);
+    y -= 32.f;
+
+    // Format position with fixed precision
+    std::ostringstream posStream;
+    posStream << std::fixed << std::setprecision(2)
+              << "X=" << view.position.X
+              << ", Y=" << view.position.Y
+              << ", Z=" << view.position.Z;
+    F(sx, y, EFmt::glow, "Position", dx, posStream.str());
+    y -= 24.f;
+
+    // For rotation, show a simplified version (just the forward vector)
+    Vector3 forward = view.forward();
+    std::ostringstream dirStream;
+    dirStream << std::fixed << std::setprecision(2)
+              << "X=" << forward.X
+              << ", Y=" << forward.Y
+              << ", Z=" << forward.Z;
+    F(sx, y, EFmt::glow, "Direction", dx, dirStream.str());
+    y -= 24.f;
 }
 
 /**
