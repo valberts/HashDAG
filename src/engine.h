@@ -163,6 +163,10 @@ public:
     void renderMarchingCubes();
     void cleanupMarchingCubes();
 
+    // Marching Cubes functions
+    std::vector<float> marchingCubes(const std::vector<float> &field, int gridSize, float isoLevel);
+    std::vector<float> generateHashDAGField(int gridSize, float scale);
+
 private:
     //-------------------------------------------------------------------------
     // Input & State Management
@@ -214,15 +218,6 @@ private:
     glf::Context *fontctx = nullptr;    /// Font rendering context
     glf::Buffer *dynamicText = nullptr; /// Dynamic text buffer
     glf::Buffer *staticText = nullptr;  /// Static text buffer
-
-    // Cube rendering resources
-    GLuint cubeVAO = 0;
-    GLuint cubeVBO = 0;
-    GLuint cubeEBO = 0;
-    GLuint cubeShaderProgram = 0;
-    GLint cubeModelLoc = 0;
-    GLint cubeViewLoc = 0;
-    GLint cubeProjLoc = 0;
 
     //-------------------------------------------------------------------------
     // Engine State
@@ -298,8 +293,6 @@ private:
     void pollInputs();
     void renderFrame();
     void renderMainScene();
-    void renderCube(); /// Renders a 3D cube for MarchingCubes mode
-    void createCube(); /// Creates the cube geometry and shaders
     void renderUI();
     void renderUIElements();
 
@@ -325,20 +318,12 @@ private:
     GLuint marchingCubesVertexCount = 0;
     GLuint marchingCubesShaderProgram = 0;
 
+    int m_gridSize = 256;
+
     // Shader locations
     GLint mcModelLoc = -1;
     GLint mcViewLoc = -1;
     GLint mcProjLoc = -1;
     GLint mcLightPosLoc = -1;
     GLint mcViewPosLoc = -1;
-
-    // Light position and animation
-    float marchingCubesAnimTime = 0.0f;
-    float sphereRadius = 1.0f;
-
-    // Generate a spherical density field
-    std::vector<float> generateSphericalField(float radius, int gridSize);
-
-    // Create marching cubes triangles from the field
-    std::vector<float> marchingCubes(const std::vector<float> &field, int gridSize, float isoLevel);
 };

@@ -2,6 +2,7 @@
 #include "hacky_profiler.hpp"
 #include "shader.h"
 #include "utils.h"
+#include "marching_cubes_tables.h"
 #include "memory.h"
 #include "dags/hash_dag/hash_dag_editors.h"
 #include <math.h>
@@ -1125,127 +1126,6 @@ void Engine::createFullScreenQuad()
     glDeleteBuffers(1, &uvBuffer);
 }
 
-/**
- * Creates a cube mesh for rendering.
- * Sets up vertex buffers, attributes, and shaders.
- */
-void Engine::createCube()
-{
-    float vertices[] = {
-        // positions
-        -0.5f, -0.5f, -0.5f,
-        0.5f, -0.5f, -0.5f,
-        0.5f, 0.5f, -0.5f,
-        -0.5f, 0.5f, -0.5f,
-        -0.5f, -0.5f, 0.5f,
-        0.5f, -0.5f, 0.5f,
-        0.5f, 0.5f, 0.5f,
-        -0.5f, 0.5f, 0.5f};
-
-    // Define cube indices
-    unsigned int indices[] = {
-        0, 1, 2, 2, 3, 0, // front
-        4, 5, 6, 6, 7, 4, // back
-        7, 3, 0, 0, 4, 7, // left
-        1, 5, 6, 6, 2, 1, // right
-        3, 2, 6, 6, 7, 3, // top
-        0, 1, 5, 5, 4, 0  // bottom
-    };
-
-    // Create vertex array object
-    glGenVertexArrays(1, &cubeVAO);
-    glGenBuffers(1, &cubeVBO);
-    glGenBuffers(1, &cubeEBO);
-
-    glBindVertexArray(cubeVAO);
-
-    // Add vertices
-    glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-    // Add indices
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cubeEBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-    // Position attribute
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
-    glEnableVertexAttribArray(0);
-
-    // Clean up state
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
-
-    // Cube shader program
-    const char *vertexShaderSource = R"(
-        #version 330 core
-        layout (location = 0) in vec3 aPos;
-        
-        uniform mat4 model;
-        uniform mat4 view;
-        uniform mat4 projection;
-        
-        out vec3 worldPosition;  // World position for coloring
-        
-        void main()
-        {
-            // Transform to world space
-            vec4 worldPos = model * vec4(aPos, 1.0);
-            worldPosition = worldPos.xyz;
-            
-            // Calculate final vertex position
-            gl_Position = projection * view * worldPos;
-        }
-    )";
-
-    const char *fragmentShaderSource = R"(
-        #version 330 core
-        in vec3 worldPosition;
-        out vec4 fragColor;
-        
-        void main()
-        {
-            // Normalize world position to [0,1] range for coloring
-            vec3 normalizedPos = normalize(worldPosition) * 0.5 + 0.5;
-            
-            // Use world position for coloring
-            fragColor = vec4(normalizedPos, 1.0);
-        }
-    )";
-
-    // Create shaders
-    unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-    glCompileShader(vertexShader);
-
-    unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-    glCompileShader(fragmentShader);
-
-    // Create shader program
-    cubeShaderProgram = glCreateProgram();
-    glAttachShader(cubeShaderProgram, vertexShader);
-    glAttachShader(cubeShaderProgram, fragmentShader);
-    glLinkProgram(cubeShaderProgram);
-
-    // Delete shaders
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    // Get uniform locations
-    cubeModelLoc = glGetUniformLocation(cubeShaderProgram, "model");
-    cubeViewLoc = glGetUniformLocation(cubeShaderProgram, "view");
-    cubeProjLoc = glGetUniformLocation(cubeShaderProgram, "projection");
-
-    // Set default color
-    GLint colorLoc = glGetUniformLocation(cubeShaderProgram, "cubeColor");
-    if (colorLoc != -1)
-    {
-        glUseProgram(cubeShaderProgram);
-        glUniform3f(colorLoc, 1.0f, 1.0f, 1.0f); // Default white color
-        glUseProgram(0);
-    }
-}
-
 //-----------------------------------------------------------------------------
 // Main Loop and Rendering
 //-----------------------------------------------------------------------------
@@ -1381,82 +1261,6 @@ void Engine::renderMainScene()
 inline float dot(const Vector3 &a, const Vector3 &b)
 {
     return (float)(a.X * b.X + a.Y * b.Y + a.Z * b.Z);
-}
-
-/**
- * Renders a simple cube in 3D space.
- * Used when in MarchingCubes render mode.
- */
-void Engine::renderCube()
-{
-    // Use the cube shader program
-    glUseProgram(cubeShaderProgram);
-
-    // Create a view matrix from the engine's camera view
-    Vector3 forward = view.forward();
-    Vector3 right = view.right();
-    Vector3 up = view.up();
-    Vector3 pos = view.position;
-
-    // Create a proper view matrix using the camera's orientation vectors
-    // This follows the OpenGL view matrix convention (look-at matrix)
-    float viewMatrix[16] = {
-        (float)right.X, (float)up.X, (float)(-forward.X), 0.0f,
-        (float)right.Y, (float)up.Y, (float)(-forward.Y), 0.0f,
-        (float)right.Z, (float)up.Z, (float)(-forward.Z), 0.0f,
-        (float)(-dot(right, pos)), (float)(-dot(up, pos)), (float)(dot(forward, pos)), 1.0f};
-
-    // Simple perspective projection
-    float aspect = (float)windowWidth / (float)windowHeight;
-    float fov = 45.0f * ((float)M_PI / 180.0f);
-    float near = 1.0f;
-    float far = 5000.0f;
-
-    float f = 1.0f / tanf(fov / 2.0f);
-    float projMatrix[16] = {
-        f / aspect, 0.0f, 0.0f, 0.0f,
-        0.0f, f, 0.0f, 0.0f,
-        0.0f, 0.0f, (far + near) / (near - far), -1.0f,
-        0.0f, 0.0f, (2.0f * far * near) / (near - far), 0.0f};
-
-    // Set view and projection matrices
-    glUniformMatrix4fv(cubeViewLoc, 1, GL_FALSE, viewMatrix);
-    glUniformMatrix4fv(cubeProjLoc, 1, GL_FALSE, projMatrix);
-
-    // Calculate a simple rotation for the cube
-    float timeT = (float)glfwGetTime();
-    float angle = timeT * 0.5f;
-    float c = cosf(angle);
-    float s = sinf(angle);
-
-    // Fixed scale and position for the cube
-    float scaleFactor = 50.0f;   // Large enough to be visible
-    float cubeDistance = 200.0f; // Position the cube in front of the camera
-
-    // Create model matrix with rotation and position
-    float model[16] = {
-        c * scaleFactor, 0.0f, s * scaleFactor, 0.0f,
-        0.0f, scaleFactor, 0.0f, 0.0f,
-        -s * scaleFactor, 0.0f, c * scaleFactor, 0.0f,
-        0.0f, 0.0f, -cubeDistance, 1.0f};
-
-    // Send the model matrix to the shader
-    glUniformMatrix4fv(cubeModelLoc, 1, GL_FALSE, model);
-
-    // Set a fixed color for the cube
-    GLint colorLoc = glGetUniformLocation(cubeShaderProgram, "cubeColor");
-    if (colorLoc != -1)
-    {
-        glUniform3f(colorLoc, 1.0f, 0.5f, 0.2f); // Orange-ish color
-    }
-
-    // Bind the VAO and draw the cube
-    glBindVertexArray(cubeVAO);
-    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-    glBindVertexArray(0);
-
-    // Clean up
-    glUseProgram(0);
 }
 
 //-----------------------------------------------------------------------------
@@ -1799,12 +1603,6 @@ void Engine::destroy()
 
     glDeleteVertexArrays(1, &fsvao);
 
-    // Clean up cube resources
-    glDeleteVertexArrays(1, &cubeVAO);
-    glDeleteBuffers(1, &cubeVBO);
-    glDeleteBuffers(1, &cubeEBO);
-    glDeleteProgram(cubeShaderProgram);
-
     tracer.reset();
     basicDag.free();
     basicDagCompressedColors.free();
@@ -1955,17 +1753,18 @@ void Engine::setupMarchingCubes()
  */
 void Engine::updateMarchingCubes()
 {
-    // Grid size for the marching cubes
-    const int gridSize = 32;
+    // Generate density field from the current DAG
+    std::vector<float> densityField;
 
-    // Generate spherical density field
-    std::vector<float> densityField = generateSphericalField(sphereRadius, gridSize);
+    densityField = generateHashDAGField(m_gridSize, 0.0f);
 
     // Generate marching cubes triangles (vertices and normals)
-    std::vector<float> vertexData = marchingCubes(densityField, gridSize, 0.0f);
+    std::vector<float> vertexData = marchingCubes(densityField, m_gridSize, 0.0f); // or -0.2f
 
     // Update vertex count
     marchingCubesVertexCount = static_cast<GLuint>(vertexData.size() / 6); // 6 floats per vertex (pos + normal)
+
+    std::cout << "Generated " << marchingCubesVertexCount / 3 << " triangles for marching cubes." << std::endl;
 
     // Create VAO and VBO if not already created
     if (marchingCubesVAO == 0)
@@ -1999,14 +1798,24 @@ void Engine::updateMarchingCubes()
  */
 void Engine::renderMarchingCubes()
 {
-    // Update animation time
-    marchingCubesAnimTime += static_cast<float>(dt);
 
-    // Adjust the sphere radius over time
-    sphereRadius = 1.0f + 0.5f * sinf(marchingCubesAnimTime * 0.5f);
+    // For debugging, force update on every frame to catch any changes
+    // updateMarchingCubes();
 
-    // Regenerate the mesh with new parameters
-    updateMarchingCubes();
+    // Update only when DAG changes
+    static EDag lastDag = static_cast<EDag>(-1); // Use invalid value for first run
+    if (lastDag != config.currentDag)
+    {
+        updateMarchingCubes();
+        lastDag = config.currentDag;
+    }
+
+    // Check if we have any vertices to render
+    if (marchingCubesVertexCount == 0)
+    {
+        // Nothing to render
+        return;
+    }
 
     // Use our shader program
     glUseProgram(marchingCubesShaderProgram);
@@ -2027,8 +1836,8 @@ void Engine::renderMarchingCubes()
     // Create perspective projection matrix
     float aspect = (float)windowWidth / (float)windowHeight;
     float fov = 45.0f * ((float)M_PI / 180.0f);
-    float near = 1.0f;
-    float far = 5000.0f;
+    float near = 0.1f;    // Reduce near plane distance to see closer objects
+    float far = 10000.0f; // Increase far plane to see distant objects
 
     float f = 1.0f / tanf(fov / 2.0f);
     float projMatrix[16] = {
@@ -2038,25 +1847,39 @@ void Engine::renderMarchingCubes()
         0.0f, 0.0f, (2.0f * far * near) / (near - far), 0.0f};
 
     // Scale and position for the marching cubes mesh
-    float scaleFactor = 100.0f;
-    float posX = 0.0f;
-    float posY = 0.0f;
-    float posZ = 0.0f;
+    float scaleFactor = 10.0f;
+    float offset = m_gridSize / 2.0f;
+    float posX = -offset * scaleFactor;
+    float posY = -offset * scaleFactor;
+    float posZ = -offset * scaleFactor;
 
+    // Position based on camera view or tool position
+    // float posX = (float)view.position.X + -offset * scaleFactor;
+    // float posY = -offset * scaleFactor;
+    // float posZ = (float)view.position.Z + -offset * scaleFactor;
+    // float posX = (float)config.path.x - offset * scaleFactor;
+    // float posY = (float)config.path.y - offset * scaleFactor;
+    // float posZ = (float)config.path.z - offset * scaleFactor;
+
+    // Create model matrix with scale and position
     float modelMatrix[16] = {
         scaleFactor, 0.0f, 0.0f, 0.0f,
         0.0f, scaleFactor, 0.0f, 0.0f,
         0.0f, 0.0f, scaleFactor, 0.0f,
         posX, posY, posZ, 1.0f};
 
-    // Pass matrices to shader
+    // Set uniforms
     glUniformMatrix4fv(mcModelLoc, 1, GL_FALSE, modelMatrix);
     glUniformMatrix4fv(mcViewLoc, 1, GL_FALSE, viewMatrix);
     glUniformMatrix4fv(mcProjLoc, 1, GL_FALSE, projMatrix);
 
-    // Draw the marching cubes mesh
+    // Enable depth testing for proper rensdering
+    glEnable(GL_DEPTH_TEST);
+
+    // Render the mesh
     glBindVertexArray(marchingCubesVAO);
     glDrawArrays(GL_TRIANGLES, 0, marchingCubesVertexCount);
+
     glBindVertexArray(0);
 }
 
@@ -2085,50 +1908,6 @@ void Engine::cleanupMarchingCubes()
 }
 
 /**
- * Generates a spherical density field.
- * The field is a 3D grid of density values.
- *
- * @param radius Radius of the sphere
- * @param gridSize Size of the grid (number of cells per dimension)
- * @return A flat vector of density values
- */
-std::vector<float> Engine::generateSphericalField(float radius, int gridSize)
-{
-    std::vector<float> field(gridSize * gridSize * gridSize);
-
-    // Center of the grid
-    float center = gridSize / 2.0f;
-
-    // Scale factor to adjust the size of the sphere
-    float scale = radius * (gridSize / 8.0f);
-
-    // Generate the density field
-    for (int z = 0; z < gridSize; z++)
-    {
-        for (int y = 0; y < gridSize; y++)
-        {
-            for (int x = 0; x < gridSize; x++)
-            {
-                // Calculate distance from center
-                float dx = (x - center) / scale;
-                float dy = (y - center) / scale;
-                float dz = (z - center) / scale;
-
-                // Sphere equation: distance from center - radius
-                // Negative values are inside the sphere, positive are outside
-                float value = dx * dx + dy * dy + dz * dz - 1.0f;
-
-                // Store in the field
-                int index = x + y * gridSize + z * gridSize * gridSize;
-                field[index] = value;
-            }
-        }
-    }
-
-    return field;
-}
-
-/**
  * Implements the marching cubes algorithm.
  * Processes a density field to generate triangles representing an isosurface.
  *
@@ -2139,303 +1918,6 @@ std::vector<float> Engine::generateSphericalField(float radius, int gridSize)
  */
 std::vector<float> Engine::marchingCubes(const std::vector<float> &field, int gridSize, float isoLevel)
 {
-    // Lookup tables for the marching cubes algorithm
-    // These tables are from http://paulbourke.net/geometry/polygonise/
-
-    // Edge table - which edges of a cube are intersected by the isosurface
-    static const int edgeTable[256] = {
-        0x0, 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
-        0x80c, 0x905, 0xa0f, 0xb06, 0xc0a, 0xd03, 0xe09, 0xf00,
-        0x190, 0x99, 0x393, 0x29a, 0x596, 0x49f, 0x795, 0x69c,
-        0x99c, 0x895, 0xb9f, 0xa96, 0xd9a, 0xc93, 0xf99, 0xe90,
-        0x230, 0x339, 0x33, 0x13a, 0x636, 0x73f, 0x435, 0x53c,
-        0xa3c, 0xb35, 0x83f, 0x936, 0xe3a, 0xf33, 0xc39, 0xd30,
-        0x3a0, 0x2a9, 0x1a3, 0xaa, 0x7a6, 0x6af, 0x5a5, 0x4ac,
-        0xbac, 0xaa5, 0x9af, 0x8a6, 0xfaa, 0xea3, 0xda9, 0xca0,
-        0x460, 0x569, 0x663, 0x76a, 0x66, 0x16f, 0x265, 0x36c,
-        0xc6c, 0xd65, 0xe6f, 0xf66, 0x86a, 0x963, 0xa69, 0xb60,
-        0x5f0, 0x4f9, 0x7f3, 0x6fa, 0x1f6, 0xff, 0x3f5, 0x2fc,
-        0xdfc, 0xcf5, 0xfff, 0xef6, 0x9fa, 0x8f3, 0xbf9, 0xaf0,
-        0x650, 0x759, 0x453, 0x55a, 0x256, 0x35f, 0x55, 0x15c,
-        0xe5c, 0xf55, 0xc5f, 0xd56, 0xa5a, 0xb53, 0x859, 0x950,
-        0x7c0, 0x6c9, 0x5c3, 0x4ca, 0x3c6, 0x2cf, 0x1c5, 0xcc,
-        0xfcc, 0xec5, 0xdcf, 0xcc6, 0xbca, 0xac3, 0x9c9, 0x8c0,
-        0x8c0, 0x9c9, 0xac3, 0xbca, 0xcc6, 0xdcf, 0xec5, 0xfcc,
-        0xcc, 0x1c5, 0x2cf, 0x3c6, 0x4ca, 0x5c3, 0x6c9, 0x7c0,
-        0x950, 0x859, 0xb53, 0xa5a, 0xd56, 0xc5f, 0xf55, 0xe5c,
-        0x15c, 0x55, 0x35f, 0x256, 0x55a, 0x453, 0x759, 0x650,
-        0xaf0, 0xbf9, 0x8f3, 0x9fa, 0xef6, 0xfff, 0xcf5, 0xdfc,
-        0x2fc, 0x3f5, 0xff, 0x1f6, 0x6fa, 0x7f3, 0x4f9, 0x5f0,
-        0xb60, 0xa69, 0x963, 0x86a, 0xf66, 0xe6f, 0xd65, 0xc6c,
-        0x36c, 0x265, 0x16f, 0x66, 0x76a, 0x663, 0x569, 0x460,
-        0xca0, 0xda9, 0xea3, 0xfaa, 0x8a6, 0x9af, 0xaa5, 0xbac,
-        0x4ac, 0x5a5, 0x6af, 0x7a6, 0xaa, 0x1a3, 0x2a9, 0x3a0,
-        0xd30, 0xc39, 0xf33, 0xe3a, 0x936, 0x83f, 0xb35, 0xa3c,
-        0x53c, 0x435, 0x73f, 0x636, 0x13a, 0x33, 0x339, 0x230,
-        0xe90, 0xf99, 0xc93, 0xd9a, 0xa96, 0xb9f, 0x895, 0x99c,
-        0x69c, 0x795, 0x49f, 0x596, 0x29a, 0x393, 0x99, 0x190,
-        0xf00, 0xe09, 0xd03, 0xc0a, 0xb06, 0xa0f, 0x905, 0x80c,
-        0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x0};
-
-    // Triangle table - how to connect vertices to form triangles
-    // This is a simplified version that only includes essential parts
-    static const int triTable[256][16] = {{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 8, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 1, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 8, 3, 9, 8, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 2, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 8, 3, 1, 2, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 2, 10, 0, 2, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 8, 3, 2, 10, 8, 10, 9, 8, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 11, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 11, 2, 8, 11, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 9, 0, 2, 3, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 11, 2, 1, 9, 11, 9, 8, 11, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 10, 1, 11, 10, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 10, 1, 0, 8, 10, 8, 11, 10, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 9, 0, 3, 11, 9, 11, 10, 9, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 8, 10, 10, 8, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 7, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 3, 0, 7, 3, 4, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 1, 9, 8, 4, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 1, 9, 4, 7, 1, 7, 3, 1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 2, 10, 8, 4, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 4, 7, 3, 0, 4, 1, 2, 10, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 2, 10, 9, 0, 2, 8, 4, 7, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 10, 9, 2, 9, 7, 2, 7, 3, 7, 9, 4, -1, -1, -1, -1},
-                                          {8, 4, 7, 3, 11, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {11, 4, 7, 11, 2, 4, 2, 0, 4, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 0, 1, 8, 4, 7, 2, 3, 11, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 7, 11, 9, 4, 11, 9, 11, 2, 9, 2, 1, -1, -1, -1, -1},
-                                          {3, 10, 1, 3, 11, 10, 7, 8, 4, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 11, 10, 1, 4, 11, 1, 0, 4, 7, 11, 4, -1, -1, -1, -1},
-                                          {4, 7, 8, 9, 0, 11, 9, 11, 10, 11, 0, 3, -1, -1, -1, -1},
-                                          {4, 7, 11, 4, 11, 9, 9, 11, 10, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 5, 4, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 5, 4, 0, 8, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 5, 4, 1, 5, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {8, 5, 4, 8, 3, 5, 3, 1, 5, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 2, 10, 9, 5, 4, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 0, 8, 1, 2, 10, 4, 9, 5, -1, -1, -1, -1, -1, -1, -1},
-                                          {5, 2, 10, 5, 4, 2, 4, 0, 2, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 10, 5, 3, 2, 5, 3, 5, 4, 3, 4, 8, -1, -1, -1, -1},
-                                          {9, 5, 4, 2, 3, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 11, 2, 0, 8, 11, 4, 9, 5, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 5, 4, 0, 1, 5, 2, 3, 11, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 1, 5, 2, 5, 8, 2, 8, 11, 4, 8, 5, -1, -1, -1, -1},
-                                          {10, 3, 11, 10, 1, 3, 9, 5, 4, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 9, 5, 0, 8, 1, 8, 10, 1, 8, 11, 10, -1, -1, -1, -1},
-                                          {5, 4, 0, 5, 0, 11, 5, 11, 10, 11, 0, 3, -1, -1, -1, -1},
-                                          {5, 4, 8, 5, 8, 10, 10, 8, 11, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 7, 8, 5, 7, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 3, 0, 9, 5, 3, 5, 7, 3, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 7, 8, 0, 1, 7, 1, 5, 7, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 5, 3, 3, 5, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 7, 8, 9, 5, 7, 10, 1, 2, -1, -1, -1, -1, -1, -1, -1},
-                                          {10, 1, 2, 9, 5, 0, 5, 3, 0, 5, 7, 3, -1, -1, -1, -1},
-                                          {8, 0, 2, 8, 2, 5, 8, 5, 7, 10, 5, 2, -1, -1, -1, -1},
-                                          {2, 10, 5, 2, 5, 3, 3, 5, 7, -1, -1, -1, -1, -1, -1, -1},
-                                          {7, 9, 5, 7, 8, 9, 3, 11, 2, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 5, 7, 9, 7, 2, 9, 2, 0, 2, 7, 11, -1, -1, -1, -1},
-                                          {2, 3, 11, 0, 1, 8, 1, 7, 8, 1, 5, 7, -1, -1, -1, -1},
-                                          {11, 2, 1, 11, 1, 7, 7, 1, 5, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 5, 8, 8, 5, 7, 10, 1, 3, 10, 3, 11, -1, -1, -1, -1},
-                                          {5, 7, 0, 5, 0, 9, 7, 11, 0, 1, 0, 10, 11, 10, 0, -1},
-                                          {11, 10, 0, 11, 0, 3, 10, 5, 0, 8, 0, 7, 5, 7, 0, -1},
-                                          {11, 10, 5, 7, 11, 5, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {10, 6, 5, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 8, 3, 5, 10, 6, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 0, 1, 5, 10, 6, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 8, 3, 1, 9, 8, 5, 10, 6, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 6, 5, 2, 6, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 6, 5, 1, 2, 6, 3, 0, 8, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 6, 5, 9, 0, 6, 0, 2, 6, -1, -1, -1, -1, -1, -1, -1},
-                                          {5, 9, 8, 5, 8, 2, 5, 2, 6, 3, 2, 8, -1, -1, -1, -1},
-                                          {2, 3, 11, 10, 6, 5, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {11, 0, 8, 11, 2, 0, 10, 6, 5, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 1, 9, 2, 3, 11, 5, 10, 6, -1, -1, -1, -1, -1, -1, -1},
-                                          {5, 10, 6, 1, 9, 2, 9, 11, 2, 9, 8, 11, -1, -1, -1, -1},
-                                          {6, 3, 11, 6, 5, 3, 5, 1, 3, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 8, 11, 0, 11, 5, 0, 5, 1, 5, 11, 6, -1, -1, -1, -1},
-                                          {3, 11, 6, 0, 3, 6, 0, 6, 5, 0, 5, 9, -1, -1, -1, -1},
-                                          {6, 5, 9, 6, 9, 11, 11, 9, 8, -1, -1, -1, -1, -1, -1, -1},
-                                          {5, 10, 6, 4, 7, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 3, 0, 4, 7, 3, 6, 5, 10, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 9, 0, 5, 10, 6, 8, 4, 7, -1, -1, -1, -1, -1, -1, -1},
-                                          {10, 6, 5, 1, 9, 7, 1, 7, 3, 7, 9, 4, -1, -1, -1, -1},
-                                          {6, 1, 2, 6, 5, 1, 4, 7, 8, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 2, 5, 5, 2, 6, 3, 0, 4, 3, 4, 7, -1, -1, -1, -1},
-                                          {8, 4, 7, 9, 0, 5, 0, 6, 5, 0, 2, 6, -1, -1, -1, -1},
-                                          {7, 3, 9, 7, 9, 4, 3, 2, 9, 5, 9, 6, 2, 6, 9, -1},
-                                          {3, 11, 2, 7, 8, 4, 10, 6, 5, -1, -1, -1, -1, -1, -1, -1},
-                                          {5, 10, 6, 4, 7, 2, 4, 2, 0, 2, 7, 11, -1, -1, -1, -1},
-                                          {0, 1, 9, 4, 7, 8, 2, 3, 11, 5, 10, 6, -1, -1, -1, -1},
-                                          {9, 2, 1, 9, 11, 2, 9, 4, 11, 7, 11, 4, 5, 10, 6, -1},
-                                          {8, 4, 7, 3, 11, 5, 3, 5, 1, 5, 11, 6, -1, -1, -1, -1},
-                                          {5, 1, 11, 5, 11, 6, 1, 0, 11, 7, 11, 4, 0, 4, 11, -1},
-                                          {0, 5, 9, 0, 6, 5, 0, 3, 6, 11, 6, 3, 8, 4, 7, -1},
-                                          {6, 5, 9, 6, 9, 11, 4, 7, 9, 7, 11, 9, -1, -1, -1, -1},
-                                          {10, 4, 9, 6, 4, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 10, 6, 4, 9, 10, 0, 8, 3, -1, -1, -1, -1, -1, -1, -1},
-                                          {10, 0, 1, 10, 6, 0, 6, 4, 0, -1, -1, -1, -1, -1, -1, -1},
-                                          {8, 3, 1, 8, 1, 6, 8, 6, 4, 6, 1, 10, -1, -1, -1, -1},
-                                          {1, 4, 9, 1, 2, 4, 2, 6, 4, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 0, 8, 1, 2, 9, 2, 4, 9, 2, 6, 4, -1, -1, -1, -1},
-                                          {0, 2, 4, 4, 2, 6, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {8, 3, 2, 8, 2, 4, 4, 2, 6, -1, -1, -1, -1, -1, -1, -1},
-                                          {10, 4, 9, 10, 6, 4, 11, 2, 3, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 8, 2, 2, 8, 11, 4, 9, 10, 4, 10, 6, -1, -1, -1, -1},
-                                          {3, 11, 2, 0, 1, 6, 0, 6, 4, 6, 1, 10, -1, -1, -1, -1},
-                                          {6, 4, 1, 6, 1, 10, 4, 8, 1, 2, 1, 11, 8, 11, 1, -1},
-                                          {9, 6, 4, 9, 3, 6, 9, 1, 3, 11, 6, 3, -1, -1, -1, -1},
-                                          {8, 11, 1, 8, 1, 0, 11, 6, 1, 9, 1, 4, 6, 4, 1, -1},
-                                          {3, 11, 6, 3, 6, 0, 0, 6, 4, -1, -1, -1, -1, -1, -1, -1},
-                                          {6, 4, 8, 11, 6, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {7, 10, 6, 7, 8, 10, 8, 9, 10, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 7, 3, 0, 10, 7, 0, 9, 10, 6, 7, 10, -1, -1, -1, -1},
-                                          {10, 6, 7, 1, 10, 7, 1, 7, 8, 1, 8, 0, -1, -1, -1, -1},
-                                          {10, 6, 7, 10, 7, 1, 1, 7, 3, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 2, 6, 1, 6, 8, 1, 8, 9, 8, 6, 7, -1, -1, -1, -1},
-                                          {2, 6, 9, 2, 9, 1, 6, 7, 9, 0, 9, 3, 7, 3, 9, -1},
-                                          {7, 8, 0, 7, 0, 6, 6, 0, 2, -1, -1, -1, -1, -1, -1, -1},
-                                          {7, 3, 2, 6, 7, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 3, 11, 10, 6, 8, 10, 8, 9, 8, 6, 7, -1, -1, -1, -1},
-                                          {2, 0, 7, 2, 7, 11, 0, 9, 7, 6, 7, 10, 9, 10, 7, -1},
-                                          {1, 8, 0, 1, 7, 8, 1, 10, 7, 6, 7, 10, 2, 3, 11, -1},
-                                          {11, 2, 1, 11, 1, 7, 10, 6, 1, 6, 7, 1, -1, -1, -1, -1},
-                                          {8, 9, 6, 8, 6, 7, 9, 1, 6, 11, 6, 3, 1, 3, 6, -1},
-                                          {0, 9, 1, 11, 6, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {7, 8, 0, 7, 0, 6, 3, 11, 0, 11, 6, 0, -1, -1, -1, -1},
-                                          {7, 11, 6, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {7, 6, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 0, 8, 11, 7, 6, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 1, 9, 11, 7, 6, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {8, 1, 9, 8, 3, 1, 11, 7, 6, -1, -1, -1, -1, -1, -1, -1},
-                                          {10, 1, 2, 6, 11, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 2, 10, 3, 0, 8, 6, 11, 7, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 9, 0, 2, 10, 9, 6, 11, 7, -1, -1, -1, -1, -1, -1, -1},
-                                          {6, 11, 7, 2, 10, 3, 10, 8, 3, 10, 9, 8, -1, -1, -1, -1},
-                                          {7, 2, 3, 6, 2, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {7, 0, 8, 7, 6, 0, 6, 2, 0, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 7, 6, 2, 3, 7, 0, 1, 9, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 6, 2, 1, 8, 6, 1, 9, 8, 8, 7, 6, -1, -1, -1, -1},
-                                          {10, 7, 6, 10, 1, 7, 1, 3, 7, -1, -1, -1, -1, -1, -1, -1},
-                                          {10, 7, 6, 1, 7, 10, 1, 8, 7, 1, 0, 8, -1, -1, -1, -1},
-                                          {0, 3, 7, 0, 7, 10, 0, 10, 9, 6, 10, 7, -1, -1, -1, -1},
-                                          {7, 6, 10, 7, 10, 8, 8, 10, 9, -1, -1, -1, -1, -1, -1, -1},
-                                          {6, 8, 4, 11, 8, 6, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 6, 11, 3, 0, 6, 0, 4, 6, -1, -1, -1, -1, -1, -1, -1},
-                                          {8, 6, 11, 8, 4, 6, 9, 0, 1, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 4, 6, 9, 6, 3, 9, 3, 1, 11, 3, 6, -1, -1, -1, -1},
-                                          {6, 8, 4, 6, 11, 8, 2, 10, 1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 2, 10, 3, 0, 11, 0, 6, 11, 0, 4, 6, -1, -1, -1, -1},
-                                          {4, 11, 8, 4, 6, 11, 0, 2, 9, 2, 10, 9, -1, -1, -1, -1},
-                                          {10, 9, 3, 10, 3, 2, 9, 4, 3, 11, 3, 6, 4, 6, 3, -1},
-                                          {8, 2, 3, 8, 4, 2, 4, 6, 2, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 4, 2, 4, 6, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 9, 0, 2, 3, 4, 2, 4, 6, 4, 3, 8, -1, -1, -1, -1},
-                                          {1, 9, 4, 1, 4, 2, 2, 4, 6, -1, -1, -1, -1, -1, -1, -1},
-                                          {8, 1, 3, 8, 6, 1, 8, 4, 6, 6, 10, 1, -1, -1, -1, -1},
-                                          {10, 1, 0, 10, 0, 6, 6, 0, 4, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 6, 3, 4, 3, 8, 6, 10, 3, 0, 3, 9, 10, 9, 3, -1},
-                                          {10, 9, 4, 6, 10, 4, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 9, 5, 7, 6, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 8, 3, 4, 9, 5, 11, 7, 6, -1, -1, -1, -1, -1, -1, -1},
-                                          {5, 0, 1, 5, 4, 0, 7, 6, 11, -1, -1, -1, -1, -1, -1, -1},
-                                          {11, 7, 6, 8, 3, 4, 3, 5, 4, 3, 1, 5, -1, -1, -1, -1},
-                                          {9, 5, 4, 10, 1, 2, 7, 6, 11, -1, -1, -1, -1, -1, -1, -1},
-                                          {6, 11, 7, 1, 2, 10, 0, 8, 3, 4, 9, 5, -1, -1, -1, -1},
-                                          {7, 6, 11, 5, 4, 10, 4, 2, 10, 4, 0, 2, -1, -1, -1, -1},
-                                          {3, 4, 8, 3, 5, 4, 3, 2, 5, 10, 5, 2, 11, 7, 6, -1},
-                                          {7, 2, 3, 7, 6, 2, 5, 4, 9, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 5, 4, 0, 8, 6, 0, 6, 2, 6, 8, 7, -1, -1, -1, -1},
-                                          {3, 6, 2, 3, 7, 6, 1, 5, 0, 5, 4, 0, -1, -1, -1, -1},
-                                          {6, 2, 8, 6, 8, 7, 2, 1, 8, 4, 8, 5, 1, 5, 8, -1},
-                                          {9, 5, 4, 10, 1, 6, 1, 7, 6, 1, 3, 7, -1, -1, -1, -1},
-                                          {1, 6, 10, 1, 7, 6, 1, 0, 7, 8, 7, 0, 9, 5, 4, -1},
-                                          {4, 0, 10, 4, 10, 5, 0, 3, 10, 6, 10, 7, 3, 7, 10, -1},
-                                          {7, 6, 10, 7, 10, 8, 5, 4, 10, 4, 8, 10, -1, -1, -1, -1},
-                                          {6, 9, 5, 6, 11, 9, 11, 8, 9, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 6, 11, 0, 6, 3, 0, 5, 6, 0, 9, 5, -1, -1, -1, -1},
-                                          {0, 11, 8, 0, 5, 11, 0, 1, 5, 5, 6, 11, -1, -1, -1, -1},
-                                          {6, 11, 3, 6, 3, 5, 5, 3, 1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 2, 10, 9, 5, 11, 9, 11, 8, 11, 5, 6, -1, -1, -1, -1},
-                                          {0, 11, 3, 0, 6, 11, 0, 9, 6, 5, 6, 9, 1, 2, 10, -1},
-                                          {11, 8, 5, 11, 5, 6, 8, 0, 5, 10, 5, 2, 0, 2, 5, -1},
-                                          {6, 11, 3, 6, 3, 5, 2, 10, 3, 10, 5, 3, -1, -1, -1, -1},
-                                          {5, 8, 9, 5, 2, 8, 5, 6, 2, 3, 8, 2, -1, -1, -1, -1},
-                                          {9, 5, 6, 9, 6, 0, 0, 6, 2, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 5, 8, 1, 8, 0, 5, 6, 8, 3, 8, 2, 6, 2, 8, -1},
-                                          {1, 5, 6, 2, 1, 6, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 3, 6, 1, 6, 10, 3, 8, 6, 5, 6, 9, 8, 9, 6, -1},
-                                          {10, 1, 0, 10, 0, 6, 9, 5, 0, 5, 6, 0, -1, -1, -1, -1},
-                                          {0, 3, 8, 5, 6, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {10, 5, 6, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {11, 5, 10, 7, 5, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {11, 5, 10, 11, 7, 5, 8, 3, 0, -1, -1, -1, -1, -1, -1, -1},
-                                          {5, 11, 7, 5, 10, 11, 1, 9, 0, -1, -1, -1, -1, -1, -1, -1},
-                                          {10, 7, 5, 10, 11, 7, 9, 8, 1, 8, 3, 1, -1, -1, -1, -1},
-                                          {11, 1, 2, 11, 7, 1, 7, 5, 1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 8, 3, 1, 2, 7, 1, 7, 5, 7, 2, 11, -1, -1, -1, -1},
-                                          {9, 7, 5, 9, 2, 7, 9, 0, 2, 2, 11, 7, -1, -1, -1, -1},
-                                          {7, 5, 2, 7, 2, 11, 5, 9, 2, 3, 2, 8, 9, 8, 2, -1},
-                                          {2, 5, 10, 2, 3, 5, 3, 7, 5, -1, -1, -1, -1, -1, -1, -1},
-                                          {8, 2, 0, 8, 5, 2, 8, 7, 5, 10, 2, 5, -1, -1, -1, -1},
-                                          {9, 0, 1, 5, 10, 3, 5, 3, 7, 3, 10, 2, -1, -1, -1, -1},
-                                          {9, 8, 2, 9, 2, 1, 8, 7, 2, 10, 2, 5, 7, 5, 2, -1},
-                                          {1, 3, 5, 3, 7, 5, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 8, 7, 0, 7, 1, 1, 7, 5, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 0, 3, 9, 3, 5, 5, 3, 7, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 8, 7, 5, 9, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {5, 8, 4, 5, 10, 8, 10, 11, 8, -1, -1, -1, -1, -1, -1, -1},
-                                          {5, 0, 4, 5, 11, 0, 5, 10, 11, 11, 3, 0, -1, -1, -1, -1},
-                                          {0, 1, 9, 8, 4, 10, 8, 10, 11, 10, 4, 5, -1, -1, -1, -1},
-                                          {10, 11, 4, 10, 4, 5, 11, 3, 4, 9, 4, 1, 3, 1, 4, -1},
-                                          {2, 5, 1, 2, 8, 5, 2, 11, 8, 4, 5, 8, -1, -1, -1, -1},
-                                          {0, 4, 11, 0, 11, 3, 4, 5, 11, 2, 11, 1, 5, 1, 11, -1},
-                                          {0, 2, 5, 0, 5, 9, 2, 11, 5, 4, 5, 8, 11, 8, 5, -1},
-                                          {9, 4, 5, 2, 11, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 5, 10, 3, 5, 2, 3, 4, 5, 3, 8, 4, -1, -1, -1, -1},
-                                          {5, 10, 2, 5, 2, 4, 4, 2, 0, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 10, 2, 3, 5, 10, 3, 8, 5, 4, 5, 8, 0, 1, 9, -1},
-                                          {5, 10, 2, 5, 2, 4, 1, 9, 2, 9, 4, 2, -1, -1, -1, -1},
-                                          {8, 4, 5, 8, 5, 3, 3, 5, 1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 4, 5, 1, 0, 5, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {8, 4, 5, 8, 5, 3, 9, 0, 5, 0, 3, 5, -1, -1, -1, -1},
-                                          {9, 4, 5, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 11, 7, 4, 9, 11, 9, 10, 11, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 8, 3, 4, 9, 7, 9, 11, 7, 9, 10, 11, -1, -1, -1, -1},
-                                          {1, 10, 11, 1, 11, 4, 1, 4, 0, 7, 4, 11, -1, -1, -1, -1},
-                                          {3, 1, 4, 3, 4, 8, 1, 10, 4, 7, 4, 11, 10, 11, 4, -1},
-                                          {4, 11, 7, 9, 11, 4, 9, 2, 11, 9, 1, 2, -1, -1, -1, -1},
-                                          {9, 7, 4, 9, 11, 7, 9, 1, 11, 2, 11, 1, 0, 8, 3, -1},
-                                          {11, 7, 4, 11, 4, 2, 2, 4, 0, -1, -1, -1, -1, -1, -1, -1},
-                                          {11, 7, 4, 11, 4, 2, 8, 3, 4, 3, 2, 4, -1, -1, -1, -1},
-                                          {2, 9, 10, 2, 7, 9, 2, 3, 7, 7, 4, 9, -1, -1, -1, -1},
-                                          {9, 10, 7, 9, 7, 4, 10, 2, 7, 8, 7, 0, 2, 0, 7, -1},
-                                          {3, 7, 10, 3, 10, 2, 7, 4, 10, 1, 10, 0, 4, 0, 10, -1},
-                                          {1, 10, 2, 8, 7, 4, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 9, 1, 4, 1, 7, 7, 1, 3, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 9, 1, 4, 1, 7, 0, 8, 1, 8, 7, 1, -1, -1, -1, -1},
-                                          {4, 0, 3, 7, 4, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {4, 8, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 10, 8, 10, 11, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 0, 9, 3, 9, 11, 11, 9, 10, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 1, 10, 0, 10, 8, 8, 10, 11, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 1, 10, 11, 3, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 2, 11, 1, 11, 9, 9, 11, 8, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 0, 9, 3, 9, 11, 1, 2, 9, 2, 11, 9, -1, -1, -1, -1},
-                                          {0, 2, 11, 8, 0, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {3, 2, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 3, 8, 2, 8, 10, 10, 8, 9, -1, -1, -1, -1, -1, -1, -1},
-                                          {9, 10, 2, 0, 9, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {2, 3, 8, 2, 8, 10, 0, 1, 8, 1, 10, 8, -1, -1, -1, -1},
-                                          {1, 10, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {1, 3, 8, 9, 1, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 9, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {0, 3, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-                                          {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
-
     std::vector<float> vertexData;
 
     // Define the 8 corners of a cube
@@ -2498,14 +1980,14 @@ std::vector<float> Engine::marchingCubes(const std::vector<float> &field, int gr
                 }
 
                 // If the cube is entirely inside or outside the isosurface, skip it
-                if (edgeTable[cubeIndex] == 0)
+                if (MarchingCubesTables::edgeTable[cubeIndex] == 0)
                     continue;
 
                 // Calculate intersection points for each edge
                 std::array<std::array<float, 3>, 12> intersections;
                 for (int i = 0; i < 12; i++)
                 {
-                    if (edgeTable[cubeIndex] & (1 << i))
+                    if (MarchingCubesTables::edgeTable[cubeIndex] & (1 << i))
                     {
                         int c1 = edgeCorners[i][0];
                         int c2 = edgeCorners[i][1];
@@ -2526,12 +2008,12 @@ std::vector<float> Engine::marchingCubes(const std::vector<float> &field, int gr
                 }
 
                 // Create triangles based on the triangulation table
-                for (int i = 0; triTable[cubeIndex][i] != -1; i += 3)
+                for (int i = 0; MarchingCubesTables::triTable[cubeIndex][i] != -1; i += 3)
                 {
                     // Get the three vertices of the triangle
-                    auto v1 = intersections[triTable[cubeIndex][i]];
-                    auto v2 = intersections[triTable[cubeIndex][i + 1]];
-                    auto v3 = intersections[triTable[cubeIndex][i + 2]];
+                    auto v1 = intersections[MarchingCubesTables::triTable[cubeIndex][i]];
+                    auto v2 = intersections[MarchingCubesTables::triTable[cubeIndex][i + 1]];
+                    auto v3 = intersections[MarchingCubesTables::triTable[cubeIndex][i + 2]];
 
                     // Calculate normal
                     float nx = (v2[1] - v1[1]) * (v3[2] - v1[2]) - (v2[2] - v1[2]) * (v3[1] - v1[1]);
@@ -2576,4 +2058,69 @@ std::vector<float> Engine::marchingCubes(const std::vector<float> &field, int gr
     }
 
     return vertexData;
+}
+
+/**
+ * Samples the HashDAG to generate a density field for marching cubes.
+ *
+ * @param gridSize Size of the grid (number of cells per dimension)
+ * @param scale Scale factor for the grid coordinates
+ * @return A density field representing the DAG structure
+ */
+std::vector<float> Engine::generateHashDAGField(int gridSize, float scale)
+{
+    // very high memory usage
+    std::vector<float> field(gridSize * gridSize * gridSize);
+
+    // Get the current DAG
+    if (!is_dag_valid(config.currentDag))
+    {
+        std::cout << "No valid DAG" << std::endl;
+        return field; // Return empty field if no valid DAG
+    }
+    std::cout << "Valid DAG: " << dag_to_string(config.currentDag) << std::endl;
+
+    // If tool position is non-zero, use that instead
+    int worldCenterX = (config.path.x != 0) ? config.path.x : 0;
+    int worldCenterY = (config.path.y != 0) ? config.path.y : 0;
+    int worldCenterZ = (config.path.z != 0) ? config.path.z : 0;
+
+    std::cout << "Using world center: (" << worldCenterX << "," << worldCenterY << "," << worldCenterZ << ")" << std::endl;
+
+    int sampleRadius = gridSize / 2;
+    std::cout << "Sampling area: center=(" << worldCenterX << "," << worldCenterY << "," << worldCenterZ
+              << "), radius=" << sampleRadius << std::endl;
+
+    // Sample the DAG to generate the field
+    for (int z = 0; z < gridSize; z++)
+    {
+        for (int y = 0; y < gridSize; y++)
+        {
+            for (int x = 0; x < gridSize; x++)
+            {
+                // Transform grid coordinates to world space, centered on worldCenter
+                int worldX = worldCenterX - sampleRadius + static_cast<int>(x);
+                int worldY = worldCenterY - sampleRadius + static_cast<int>(y);
+                int worldZ = worldCenterZ - sampleRadius + static_cast<int>(z);
+
+                // Create path from world coordinates
+                Path path(worldX, worldY, worldZ);
+
+                // Check if this voxel exists in the DAG
+                bool voxelExists = false;
+
+                // Only HashDag is supported with DAGUtils::get_value
+                if (config.currentDag == EDag::HashDag)
+                {
+                    voxelExists = DAGUtils::get_value(hashDag, path);
+                }
+
+                // Set the field value (-1 = inside, +1 = outside)
+                int index = x + y * gridSize + z * gridSize * gridSize;
+                field[index] = voxelExists ? -1.0f : 1.0f;
+            }
+        }
+    }
+
+    return field;
 }
