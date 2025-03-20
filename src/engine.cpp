@@ -1759,7 +1759,7 @@ void Engine::updateMarchingCubes()
     densityField = generateHashDAGField(m_gridSize, 0.0f);
 
     // Generate marching cubes triangles (vertices and normals)
-    std::vector<float> vertexData = marchingCubes(densityField, m_gridSize, 0.0f); // or -0.2f
+    std::vector<float> vertexData = marchingCubes(densityField, m_gridSize, 0.0f); // -1.0 to 1.0 range, 0.0f isosurface, higher value results in seeing less holes
 
     // Update vertex count
     marchingCubesVertexCount = static_cast<GLuint>(vertexData.size() / 6); // 6 floats per vertex (pos + normal)
