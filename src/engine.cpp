@@ -312,6 +312,18 @@ void Engine::key_callback_impl(int key, int scancode, int action, int mods)
             toggle_fullscreen();
         }
 
+        if (key == GLFW_KEY_N) // Added for smooth shading toggle
+        {
+            config.enableSmoothShading = !config.enableSmoothShading;
+            printf("Smooth Shading: %s\n", config.enableSmoothShading ? "ON" : "OFF");
+        }
+
+        if (key == GLFW_KEY_B) // Added for white base color toggle
+        {
+            config.useWhiteBaseColor = !config.useWhiteBaseColor;
+            printf("Use White Base Color: %s\n", config.useWhiteBaseColor ? "ON" : "OFF");
+        }
+
         const double rotationStep = (state.keys[GLFW_KEY_LEFT_SHIFT] || state.keys[GLFW_KEY_RIGHT_SHIFT] ? -10 : 10);
         if (key == GLFW_KEY_F1)
         {
@@ -748,23 +760,27 @@ double Engine::resolveVoxelColors()
         config.radius,
         config.copySourcePath,
         config.copyDestPath};
+    // Pass smooth shading state
+    const bool enableSmoothShading = config.enableSmoothShading;
+    // Pass white base color state
+    const bool useWhiteBaseColor = config.useWhiteBaseColor;
 
     switch (config.currentDag)
     {
     case EDag::BasicDagUncompressedColors:
         colorsTime = tracer->resolve_colors(basicDag, basicDagUncompressedColors, config.debugColors,
-                                            debugColorsIndexLevel, toolInfo);
+                                            debugColorsIndexLevel, toolInfo, enableSmoothShading, useWhiteBaseColor); // Pass flags
         break;
     case EDag::BasicDagCompressedColors:
         colorsTime = tracer->resolve_colors(basicDag, basicDagCompressedColors, config.debugColors, debugColorsIndexLevel,
-                                            toolInfo);
+                                            toolInfo, enableSmoothShading, useWhiteBaseColor); // Pass flags
         break;
     case EDag::BasicDagColorErrors:
         colorsTime = tracer->resolve_colors(basicDag, basicDagColorErrors, config.debugColors,
-                                            debugColorsIndexLevel, toolInfo);
+                                            debugColorsIndexLevel, toolInfo, enableSmoothShading, useWhiteBaseColor); // Pass flags
         break;
     case EDag::HashDag:
-        colorsTime = tracer->resolve_colors(hashDag, hashDagColors, config.debugColors, debugColorsIndexLevel, toolInfo);
+        colorsTime = tracer->resolve_colors(hashDag, hashDagColors, config.debugColors, debugColorsIndexLevel, toolInfo, enableSmoothShading, useWhiteBaseColor); // Pass flags
         break;
     }
 

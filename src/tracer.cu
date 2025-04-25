@@ -2,285 +2,362 @@
 #include "dags/basic_dag/basic_dag.h"
 #include "dags/hash_dag/hash_dag.h"
 #include "dags/hash_dag/hash_dag_colors.h"
+#include "utils.h" //Utils for child_mask
+
+template <typename TDAG>
+DEVICE bool dag_is_voxel_solid(const TDAG &dag, const Path &p)
+{
+    // Check if the path coordinates are within the DAG bounds
+    // (Assuming max coordinate is 2^levels - 1)
+    const uint32 maxCoord = (1u << dag.levels) - 1;
+    if (p.path.x > maxCoord || p.path.y > maxCoord || p.path.z > maxCoord)
+    {
+        return false; // Path is outside the DAG domain
+    }
+
+    uint32 level = 0;
+    uint32 nodeIndex = dag.get_first_node_index();
+
+    // Traverse internal nodes
+    while (level < dag.leaf_level())
+    {
+        const uint32 node = dag.get_node(level, nodeIndex);
+        const uint8 childMask = Utils::child_mask(node);
+        const uint8 child = p.child_index(level + 1, dag.levels); // Child index for the *next* level
+
+        // If the child corresponding to the path doesn't exist, the voxel is empty
+        if (!(childMask & (1u << child)))
+        {
+            return false;
+        }
+
+        // Descend to the child node
+        nodeIndex = dag.get_child_index(level, nodeIndex, childMask, child);
+        level++;
+    }
+
+    // Now at the leaf level (level == dag.leaf_level())
+    // Get the Leaf node associated with the current nodeIndex
+    const Leaf leaf = dag.get_leaf(nodeIndex);
+
+    /* // Other implementation using direct 64-bit leafBitIndex:
+    // Determine the bit index within the 64-bit leaf mask corresponding
+    // to the final two levels of the path.
+    const uint8 leafBitIndex =
+        (((p.path.x & 0x1) == 0) ? 0 : 4) |  // child_index(dag.levels, dag.levels) bit 2 (X)
+        (((p.path.y & 0x1) == 0) ? 0 : 2) |  // child_index(dag.levels, dag.levels) bit 1 (Y)
+        (((p.path.z & 0x1) == 0) ? 0 : 1) |  // child_index(dag.levels, dag.levels) bit 0 (Z)
+        (((p.path.x & 0x2) == 0) ? 0 : 32) | // child_index(dag.leaf_level() + 1, dag.levels) bit 2 (X) * 8
+        (((p.path.y & 0x2) == 0) ? 0 : 16) | // child_index(dag.leaf_level() + 1, dag.levels) bit 1 (Y) * 8
+        (((p.path.z & 0x2) == 0) ? 0 : 8);   // child_index(dag.leaf_level() + 1, dag.levels) bit 0 (Z) * 8
+
+    // Check if the specific bit corresponding to the path is set in the leaf mask
+    return (leaf.to_64() & (uint64(1) << leafBitIndex)) != 0;
+    */
+
+    // Alternative implementation using get_second_child_mask:
+    // Calculate index of the first-level child octant (0-7)
+    const uint8 firstChildIndex = p.child_index(dag.leaf_level() + 1, dag.levels);
+
+    // Get the 8-bit mask for that specific sub-cube using the Leaf method
+    const uint8 secondChildMask = leaf.get_second_child_mask(firstChildIndex);
+
+    // Calculate the index within that 2x2x2 sub-cube (0-7)
+    const uint8 secondChildIndex = p.child_index(dag.levels, dag.levels); // Index at the final level
+
+    // Check if the bit is set in the 8-bit mask
+    return (secondChildMask & (1u << secondChildIndex)) != 0;
+}
 
 // order: (shouldFlipX, shouldFlipY, shouldFlipZ)
 DEVICE uint8 next_child(uint8 order, uint8 mask)
 {
-	for (uint8 child = 0; child < 8; ++child)
-	{
-		uint8 childInOrder = child ^ order;
-		if (mask & (1u << childInOrder))
-			return childInOrder;
-	}
-	check(false);
-	return 0;
+    for (uint8 child = 0; child < 8; ++child)
+    {
+        uint8 childInOrder = child ^ order;
+        if (mask & (1u << childInOrder))
+            return childInOrder;
+    }
+    check(false);
+    return 0;
 }
 
-template<bool isRoot, typename TDAG>
+template <bool isRoot, typename TDAG>
 DEVICE uint8 compute_intersection_mask(
-	uint32 level,
-	const Path& path,
-	const TDAG& dag,
-	const float3& rayOrigin,
-	const float3& rayDirection,
-	const float3& rayDirectionInverted)
+    uint32 level,
+    const Path &path,
+    const TDAG &dag,
+    const float3 &rayOrigin,
+    const float3 &rayDirection,
+    const float3 &rayDirectionInverted)
 {
-	// Find node center = .5 * (boundsMin + boundsMax) + .5f
-	const uint32 shift = dag.levels - level;
+    // Find node center = .5 * (boundsMin + boundsMax) + .5f
+    const uint32 shift = dag.levels - level;
 
-	const float radius = float(1u << (shift - 1));
-	const float3 center = make_float3(radius) + path.as_position(shift);
+    const float radius = float(1u << (shift - 1));
+    const float3 center = make_float3(radius) + path.as_position(shift);
 
-	const float3 centerRelativeToRay = center - rayOrigin;
+    const float3 centerRelativeToRay = center - rayOrigin;
 
-	// Ray intersection with axis-aligned planes centered on the node
-	// => rayOrg + tmid * rayDir = center
-	const float3 tmid = centerRelativeToRay * rayDirectionInverted;
+    // Ray intersection with axis-aligned planes centered on the node
+    // => rayOrg + tmid * rayDir = center
+    const float3 tmid = centerRelativeToRay * rayDirectionInverted;
 
-	// t-values for where the ray intersects the slabs centered on the node
-	// and extending to the side of the node
-	float tmin, tmax;
-	{
-		const float3 slabRadius = radius * abs(rayDirectionInverted);
-		const float3 pmin = tmid - slabRadius;
-		tmin = max(max(pmin), .0f);
+    // t-values for where the ray intersects the slabs centered on the node
+    // and extending to the side of the node
+    float tmin, tmax;
+    {
+        const float3 slabRadius = radius * abs(rayDirectionInverted);
+        const float3 pmin = tmid - slabRadius;
+        tmin = max(max(pmin), .0f);
 
-		const float3 pmax = tmid + slabRadius;
-		tmax = min(pmax);
-	}
+        const float3 pmax = tmid + slabRadius;
+        tmax = min(pmax);
+    }
 
-	// Check if we actually hit the root node
-	// This test may not be entirely safe due to float precision issues.
-	// especially on lower levels. For the root node this seems OK, though.
-	if (isRoot && (tmin >= tmax))
-	{
-		return 0;
-	}
+    // Check if we actually hit the root node
+    // This test may not be entirely safe due to float precision issues.
+    // especially on lower levels. For the root node this seems OK, though.
+    if (isRoot && (tmin >= tmax))
+    {
+        return 0;
+    }
 
-	// Identify first child that is intersected
-	// NOTE: We assume that we WILL hit one child, since we assume that the
-	//       parents bounding box is hit.
-	// NOTE: To safely get the correct node, we cannot use o+ray_tmin*d as the
-	//       intersection point, since this point might lie too close to an
-	//       axis plane. Instead, we use the midpoint between max and min which
-	//       will lie in the correct node IF the ray only intersects one node.
-	//       Otherwise, it will still lie in an intersected node, so there are
-	//       no false positives from this.
-	uint8 intersectionMask = 0;
-	{
-		const float3 pointOnRay = (0.5f * (tmin + tmax)) * rayDirection;
+    // Identify first child that is intersected
+    // NOTE: We assume that we WILL hit one child, since we assume that the
+    //       parents bounding box is hit.
+    // NOTE: To safely get the correct node, we cannot use o+ray_tmin*d as the
+    //       intersection point, since this point might lie too close to an
+    //       axis plane. Instead, we use the midpoint between max and min which
+    //       will lie in the correct node IF the ray only intersects one node.
+    //       Otherwise, it will still lie in an intersected node, so there are
+    //       no false positives from this.
+    uint8 intersectionMask = 0;
+    {
+        const float3 pointOnRay = (0.5f * (tmin + tmax)) * rayDirection;
 
-		uint8 const firstChild =
-			((pointOnRay.x >= centerRelativeToRay.x) ? 4 : 0) +
-			((pointOnRay.y >= centerRelativeToRay.y) ? 2 : 0) +
-			((pointOnRay.z >= centerRelativeToRay.z) ? 1 : 0);
+        uint8 const firstChild =
+            ((pointOnRay.x >= centerRelativeToRay.x) ? 4 : 0) +
+            ((pointOnRay.y >= centerRelativeToRay.y) ? 2 : 0) +
+            ((pointOnRay.z >= centerRelativeToRay.z) ? 1 : 0);
 
-		intersectionMask |= (1u << firstChild);
-	}
+        intersectionMask |= (1u << firstChild);
+    }
 
-	// We now check the points where the ray intersects the X, Y and Z plane.
-	// If the intersection is within (ray_tmin, ray_tmax) then the intersection
-	// point implies that two voxels will be touched by the ray. We find out
-	// which voxels to mask for an intersection point at +X, +Y by setting
-	// ALL voxels at +X and ALL voxels at +Y and ANDing these two masks.
-	//
-	// NOTE: When the intersection point is close enough to another axis plane,
-	//       we must check both sides or we will get robustness issues.
-	const float epsilon = 1e-4f;
+    // We now check the points where the ray intersects the X, Y and Z plane.
+    // If the intersection is within (ray_tmin, ray_tmax) then the intersection
+    // point implies that two voxels will be touched by the ray. We find out
+    // which voxels to mask for an intersection point at +X, +Y by setting
+    // ALL voxels at +X and ALL voxels at +Y and ANDing these two masks.
+    //
+    // NOTE: When the intersection point is close enough to another axis plane,
+    //       we must check both sides or we will get robustness issues.
+    const float epsilon = 1e-4f;
 
-	if (tmin <= tmid.x && tmid.x <= tmax)
-	{
-		const float3 pointOnRay = tmid.x * rayDirection;
+    if (tmin <= tmid.x && tmid.x <= tmax)
+    {
+        const float3 pointOnRay = tmid.x * rayDirection;
 
-		uint8 A = 0;
-		if (pointOnRay.y >= centerRelativeToRay.y - epsilon) A |= 0xCC;
-		if (pointOnRay.y <= centerRelativeToRay.y + epsilon) A |= 0x33;
+        uint8 A = 0;
+        if (pointOnRay.y >= centerRelativeToRay.y - epsilon)
+            A |= 0xCC;
+        if (pointOnRay.y <= centerRelativeToRay.y + epsilon)
+            A |= 0x33;
 
-		uint8 B = 0;
-		if (pointOnRay.z >= centerRelativeToRay.z - epsilon) B |= 0xAA;
-		if (pointOnRay.z <= centerRelativeToRay.z + epsilon) B |= 0x55;
+        uint8 B = 0;
+        if (pointOnRay.z >= centerRelativeToRay.z - epsilon)
+            B |= 0xAA;
+        if (pointOnRay.z <= centerRelativeToRay.z + epsilon)
+            B |= 0x55;
 
-		intersectionMask |= A & B;
-	}
-	if (tmin <= tmid.y && tmid.y <= tmax)
-	{
-		const float3 pointOnRay = tmid.y * rayDirection;
+        intersectionMask |= A & B;
+    }
+    if (tmin <= tmid.y && tmid.y <= tmax)
+    {
+        const float3 pointOnRay = tmid.y * rayDirection;
 
-		uint8 C = 0;
-		if (pointOnRay.x >= centerRelativeToRay.x - epsilon) C |= 0xF0;
-		if (pointOnRay.x <= centerRelativeToRay.x + epsilon) C |= 0x0F;
+        uint8 C = 0;
+        if (pointOnRay.x >= centerRelativeToRay.x - epsilon)
+            C |= 0xF0;
+        if (pointOnRay.x <= centerRelativeToRay.x + epsilon)
+            C |= 0x0F;
 
-		uint8 D = 0;
-		if (pointOnRay.z >= centerRelativeToRay.z - epsilon) D |= 0xAA;
-		if (pointOnRay.z <= centerRelativeToRay.z + epsilon) D |= 0x55;
+        uint8 D = 0;
+        if (pointOnRay.z >= centerRelativeToRay.z - epsilon)
+            D |= 0xAA;
+        if (pointOnRay.z <= centerRelativeToRay.z + epsilon)
+            D |= 0x55;
 
-		intersectionMask |= C & D;
-	}
-	if (tmin <= tmid.z && tmid.z <= tmax)
-	{
-		const float3 pointOnRay = tmid.z * rayDirection;
+        intersectionMask |= C & D;
+    }
+    if (tmin <= tmid.z && tmid.z <= tmax)
+    {
+        const float3 pointOnRay = tmid.z * rayDirection;
 
-		uint8 E = 0;
-		if (pointOnRay.x >= centerRelativeToRay.x - epsilon) E |= 0xF0;
-		if (pointOnRay.x <= centerRelativeToRay.x + epsilon) E |= 0x0F;
+        uint8 E = 0;
+        if (pointOnRay.x >= centerRelativeToRay.x - epsilon)
+            E |= 0xF0;
+        if (pointOnRay.x <= centerRelativeToRay.x + epsilon)
+            E |= 0x0F;
 
+        uint8 F = 0;
+        if (pointOnRay.y >= centerRelativeToRay.y - epsilon)
+            F |= 0xCC;
+        if (pointOnRay.y <= centerRelativeToRay.y + epsilon)
+            F |= 0x33;
 
-		uint8 F = 0;
-		if (pointOnRay.y >= centerRelativeToRay.y - epsilon) F |= 0xCC;
-		if (pointOnRay.y <= centerRelativeToRay.y + epsilon) F |= 0x33;
+        intersectionMask |= E & F;
+    }
 
-		intersectionMask |= E & F;
-	}
-
-	return intersectionMask;
+    return intersectionMask;
 }
 
 struct StackEntry
 {
-	uint32 index;
-	uint8 childMask;
-	uint8 visitMask;
+    uint32 index;
+    uint8 childMask;
+    uint8 visitMask;
 };
 
-template<typename TDAG>
+template <typename TDAG>
 __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TDAG dag)
 {
-	// Target pixel coordinate
-	const uint2 pixel = make_uint2(
-		blockIdx.x * blockDim.x + threadIdx.x,
-		blockIdx.y * blockDim.y + threadIdx.y);
+    // Target pixel coordinate
+    const uint2 pixel = make_uint2(
+        blockIdx.x * blockDim.x + threadIdx.x,
+        blockIdx.y * blockDim.y + threadIdx.y);
 
-	if (pixel.x >= imageWidth || pixel.y >= imageHeight)
-		return; // outside.
+    if (pixel.x >= imageWidth || pixel.y >= imageHeight)
+        return; // outside.
 
-	// Pre-calculate per-pixel data
-	const float3 rayOrigin = make_float3(traceParams.cameraPosition);
-	const float3 rayDirection = make_float3(normalize(traceParams.rayMin + pixel.x * traceParams.rayDDx + pixel.y * traceParams.rayDDy - traceParams.cameraPosition));
+    // Pre-calculate per-pixel data
+    const float3 rayOrigin = make_float3(traceParams.cameraPosition);
+    const float3 rayDirection = make_float3(normalize(traceParams.rayMin + pixel.x * traceParams.rayDDx + pixel.y * traceParams.rayDDy - traceParams.cameraPosition));
 
-	const float3 rayDirectionInverse = make_float3(make_double3(1. / rayDirection.x, 1. / rayDirection.y, 1. / rayDirection.z));
-	const uint8 rayChildOrder =
-		(rayDirection.x < 0.f ? 4 : 0) +
-		(rayDirection.y < 0.f ? 2 : 0) +
-		(rayDirection.z < 0.f ? 1 : 0);
+    const float3 rayDirectionInverse = make_float3(make_double3(1. / rayDirection.x, 1. / rayDirection.y, 1. / rayDirection.z));
+    const uint8 rayChildOrder =
+        (rayDirection.x < 0.f ? 4 : 0) +
+        (rayDirection.y < 0.f ? 2 : 0) +
+        (rayDirection.z < 0.f ? 1 : 0);
 
-	// State
-	uint32 level = 0;
-	Path path(0, 0, 0);
+    // State
+    uint32 level = 0;
+    Path path(0, 0, 0);
 
-	StackEntry stack[MAX_LEVELS];
-	StackEntry cache;
-	Leaf cachedLeaf; // needed to iterate on the last few levels
+    StackEntry stack[MAX_LEVELS];
+    StackEntry cache;
+    Leaf cachedLeaf; // needed to iterate on the last few levels
 
-	cache.index = dag.get_first_node_index();
-	cache.childMask = Utils::child_mask(dag.get_node(0, cache.index));
-	cache.visitMask = cache.childMask & compute_intersection_mask<true>(0, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
+    cache.index = dag.get_first_node_index();
+    cache.childMask = Utils::child_mask(dag.get_node(0, cache.index));
+    cache.visitMask = cache.childMask & compute_intersection_mask<true>(0, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
 
-	// Traverse DAG
-	for (;;)
-	{
-		// Ascend if there are no children left.
-		{
-			uint32 newLevel = level;
-			while (newLevel > 0 && !cache.visitMask)
-			{
-				newLevel--;
-				cache = stack[newLevel];
-			}
+    // Traverse DAG
+    for (;;)
+    {
+        // Ascend if there are no children left.
+        {
+            uint32 newLevel = level;
+            while (newLevel > 0 && !cache.visitMask)
+            {
+                newLevel--;
+                cache = stack[newLevel];
+            }
 
-			if (newLevel == 0 && !cache.visitMask)
-			{
-				path = Path(0, 0, 0);
-				break;
-			}
+            if (newLevel == 0 && !cache.visitMask)
+            {
+                path = Path(0, 0, 0);
+                break;
+            }
 
-			path.ascend(level - newLevel);
-			level = newLevel;
-		}
+            path.ascend(level - newLevel);
+            level = newLevel;
+        }
 
-		// Find next child in order by the current ray's direction
-		const uint8 nextChild = next_child(rayChildOrder, cache.visitMask);
+        // Find next child in order by the current ray's direction
+        const uint8 nextChild = next_child(rayChildOrder, cache.visitMask);
 
-		// Mark it as handled
-		cache.visitMask &= ~(1u << nextChild);
+        // Mark it as handled
+        cache.visitMask &= ~(1u << nextChild);
 
-		// Intersect that child with the ray
-		{
-			path.descend(nextChild);
-			stack[level] = cache;
-			level++;
+        // Intersect that child with the ray
+        {
+            path.descend(nextChild);
+            stack[level] = cache;
+            level++;
 
-			// If we're at the final level, we have intersected a single voxel.
-			if (level == dag.levels)
-			{
-				break;
-			}
+            // If we're at the final level, we have intersected a single voxel.
+            if (level == dag.levels)
+            {
+                break;
+            }
 
-			// Are we in an internal node?
-			if (level < dag.leaf_level())
-			{
-				cache.index = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
-				cache.childMask = Utils::child_mask(dag.get_node(level, cache.index));
-				cache.visitMask = cache.childMask &	compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
-			}
-			else
-			{
-				/* The second-to-last and last levels are different: the data
-				 * of these two levels (2^3 voxels) are packed densely into a
-				 * single 64-bit word.
-				 */
-				uint8 childMask;
+            // Are we in an internal node?
+            if (level < dag.leaf_level())
+            {
+                cache.index = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
+                cache.childMask = Utils::child_mask(dag.get_node(level, cache.index));
+                cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
+            }
+            else
+            {
+                /* The second-to-last and last levels are different: the data
+                 * of these two levels (2^3 voxels) are packed densely into a
+                 * single 64-bit word.
+                 */
+                uint8 childMask;
 
-				if (level == dag.leaf_level())
-				{
-					const uint32 addr = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
-					cachedLeaf = dag.get_leaf(addr);
-					childMask = cachedLeaf.get_first_child_mask();
-				}
-				else
-				{
-					childMask = cachedLeaf.get_second_child_mask(nextChild);
-				}
+                if (level == dag.leaf_level())
+                {
+                    const uint32 addr = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
+                    cachedLeaf = dag.get_leaf(addr);
+                    childMask = cachedLeaf.get_first_child_mask();
+                }
+                else
+                {
+                    childMask = cachedLeaf.get_second_child_mask(nextChild);
+                }
 
-				// No need to set the index for bottom nodes
-				cache.childMask = childMask;
-				cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
-			}
-		}
-	}
+                // No need to set the index for bottom nodes
+                cache.childMask = childMask;
+                cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
+            }
+        }
+    }
 
-	path.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.pathsSurface);
+    path.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.pathsSurface);
 }
 
-template<typename TDAG, typename TDAGColors>
+template <typename TDAG, typename TDAGColors>
 __global__ void Tracer::trace_colors(const TraceColorsParams traceParams, const TDAG dag, const TDAGColors colors)
 {
-	const uint2 pixel = make_uint2(
-		blockIdx.x * blockDim.x + threadIdx.x,
-		blockIdx.y * blockDim.y + threadIdx.y);
+    const uint2 pixel = make_uint2(
+        blockIdx.x * blockDim.x + threadIdx.x,
+        blockIdx.y * blockDim.y + threadIdx.y);
 
-	if (pixel.x >= imageWidth || pixel.y >= imageHeight)
-		return; // outside
+    if (pixel.x >= imageWidth || pixel.y >= imageHeight)
+        return; // outside
 
-	const auto setColorImpl = [&](uint32 color)
-	{
-		surf2Dwrite(color, traceParams.colorsSurface, (int)sizeof(uint32) * pixel.x, pixel.y, cudaBoundaryModeClamp);
-	};
+    const auto setColorImpl = [&](uint32 color)
+    {
+        surf2Dwrite(color, traceParams.colorsSurface, (int)sizeof(uint32) * pixel.x, pixel.y, cudaBoundaryModeClamp);
+    };
 
-	const Path path = Path::load(pixel.x, pixel.y, traceParams.pathsSurface);
-	if (path.is_null())
+    const Path path = Path::load(pixel.x, pixel.y, traceParams.pathsSurface);
+    if (path.is_null())
     {
         setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f));
         return;
-	}
+    }
 
-	const float toolStrength = traceParams.toolInfo.strength(path);
-	const auto setColor = [&](uint32 color)
-	{
+    const float toolStrength = traceParams.toolInfo.strength(path);
+    const auto setColor = [&](uint32 color)
+    {
 #if TOOL_OVERLAY
-		if (toolStrength > 0)
-		{
-			color = ColorUtils::float3_to_rgb888(lerp(ColorUtils::rgb888_to_float3(color), make_float3(1, 0, 0), clamp(100 * toolStrength, 0.f, .5f)));
-		}
+        if (toolStrength > 0)
+        {
+            color = ColorUtils::float3_to_rgb888(lerp(ColorUtils::rgb888_to_float3(color), make_float3(1, 0, 0), clamp(100 * toolStrength, 0.f, .5f)));
+        }
 #endif
         setColorImpl(color);
     };
@@ -292,254 +369,318 @@ __global__ void Tracer::trace_colors(const TraceColorsParams traceParams, const 
     };
 
     uint64 nof_leaves = 0;
-	uint32 debugColorsIndex = 0;
+    uint32 debugColorsIndex = 0;
 
-	uint32 colorNodeIndex = 0;
-	typename TDAGColors::ColorLeaf colorLeaf = colors.get_default_leaf();
+    uint32 colorNodeIndex = 0;
+    typename TDAGColors::ColorLeaf colorLeaf = colors.get_default_leaf();
 
-	uint32 level = 0;
-	uint32 nodeIndex = dag.get_first_node_index();
-	while (level < dag.leaf_level())
-	{
-		level++;
+    uint32 level = 0;
+    uint32 nodeIndex = dag.get_first_node_index();
+    while (level < dag.leaf_level())
+    {
+        level++;
 
-		// Find the current childmask and which subnode we are in
-		const uint32 node = dag.get_node(level - 1, nodeIndex);
-		const uint8 childMask = Utils::child_mask(node);
-		const uint8 child = path.child_index(level, dag.levels);
+        // Find the current childmask and which subnode we are in
+        const uint32 node = dag.get_node(level - 1, nodeIndex);
+        const uint8 childMask = Utils::child_mask(node);
+        const uint8 child = path.child_index(level, dag.levels);
 
-		// Make sure the node actually exists
-		if (!(childMask & (1 << child)))
-		{
-			setColor(0xFF00FF);
-			return;
-		}
+        // Make sure the node actually exists
+        if (!(childMask & (1 << child)))
+        {
+            setColor(0xFF00FF);
+            return;
+        }
 
-		ASSUME(level > 0);
-		if (level - 1 < colors.get_color_tree_levels())
-		{
-			colorNodeIndex = colors.get_child_index(level - 1, colorNodeIndex, child);
-			if (level == colors.get_color_tree_levels())
-			{
-				check(nof_leaves == 0);
-				colorLeaf = colors.get_leaf(colorNodeIndex);
-			}
-			else
-			{
-				// TODO nicer interface
-				if (!colorNodeIndex)
-				{
-					invalidColor();
-					return;
-				}
-			}
-		}
+        ASSUME(level > 0);
+        if (level - 1 < colors.get_color_tree_levels())
+        {
+            colorNodeIndex = colors.get_child_index(level - 1, colorNodeIndex, child);
+            if (level == colors.get_color_tree_levels())
+            {
+                check(nof_leaves == 0);
+                colorLeaf = colors.get_leaf(colorNodeIndex);
+            }
+            else
+            {
+                // TODO nicer interface
+                if (!colorNodeIndex)
+                {
+                    invalidColor();
+                    return;
+                }
+            }
+        }
 
-		// Debug
-		if (traceParams.debugColors == EDebugColors::Index ||
-			traceParams.debugColors == EDebugColors::Position ||
-			traceParams.debugColors == EDebugColors::ColorTree)
-		{
-			if (traceParams.debugColors == EDebugColors::Index &&
-				traceParams.debugColorsIndexLevel == level - 1)
-			{
-				debugColorsIndex = nodeIndex;
-			}
-			if (level == dag.leaf_level())
-			{
-				if (traceParams.debugColorsIndexLevel == dag.leaf_level())
-				{
-					check(debugColorsIndex == 0);
-					const uint32 childIndex = dag.get_child_index(level - 1, nodeIndex, childMask, child);
-					debugColorsIndex = childIndex;
-				}
+        // Debug
+        if (traceParams.debugColors == EDebugColors::Index ||
+            traceParams.debugColors == EDebugColors::Position ||
+            traceParams.debugColors == EDebugColors::ColorTree)
+        {
+            if (traceParams.debugColors == EDebugColors::Index &&
+                traceParams.debugColorsIndexLevel == level - 1)
+            {
+                debugColorsIndex = nodeIndex;
+            }
+            if (level == dag.leaf_level())
+            {
+                if (traceParams.debugColorsIndexLevel == dag.leaf_level())
+                {
+                    check(debugColorsIndex == 0);
+                    const uint32 childIndex = dag.get_child_index(level - 1, nodeIndex, childMask, child);
+                    debugColorsIndex = childIndex;
+                }
 
-				if (traceParams.debugColors == EDebugColors::Index)
-				{
-					setColor(Utils::murmurhash32(debugColorsIndex));
-				}
-				else if (traceParams.debugColors == EDebugColors::Position)
-				{
-					constexpr uint32 checkerSize = 0x7FF;
-					float color = ((path.path.x ^ path.path.y ^ path.path.z) & checkerSize) / float(checkerSize);
-					color = (color + 0.5) / 2;
-					setColor(ColorUtils::float3_to_rgb888(Utils::has_flag(nodeIndex) ? make_float3(color, 0, 0) : make_float3(color)));
-				}
-				else
-				{
-					check(traceParams.debugColors == EDebugColors::ColorTree);
-					const uint32 offset = dag.levels - colors.get_color_tree_levels();
-					const float color = ((path.path.x >> offset) ^ (path.path.y >> offset) ^ (path.path.z >> offset)) & 0x1;
-					setColor(ColorUtils::float3_to_rgb888(make_float3(color)));
-				}
-				return;
-			}
-			else
-			{
-				nodeIndex = dag.get_child_index(level - 1, nodeIndex, childMask, child);
-				continue;
-			}
-		}
+                if (traceParams.debugColors == EDebugColors::Index)
+                {
+                    setColor(Utils::murmurhash32(debugColorsIndex));
+                }
+                else if (traceParams.debugColors == EDebugColors::Position)
+                {
+                    constexpr uint32 checkerSize = 0x7FF;
+                    float color = ((path.path.x ^ path.path.y ^ path.path.z) & checkerSize) / float(checkerSize);
+                    color = (color + 0.5) / 2;
+                    setColor(ColorUtils::float3_to_rgb888(Utils::has_flag(nodeIndex) ? make_float3(color, 0, 0) : make_float3(color)));
+                }
+                else
+                {
+                    check(traceParams.debugColors == EDebugColors::ColorTree);
+                    const uint32 offset = dag.levels - colors.get_color_tree_levels();
+                    const float color = ((path.path.x >> offset) ^ (path.path.y >> offset) ^ (path.path.z >> offset)) & 0x1;
+                    setColor(ColorUtils::float3_to_rgb888(make_float3(color)));
+                }
+                return;
+            }
+            else
+            {
+                nodeIndex = dag.get_child_index(level - 1, nodeIndex, childMask, child);
+                continue;
+            }
+        }
 
-		//////////////////////////////////////////////////////////////////////////
-		// Find out how many leafs are in the children preceding this
-		//////////////////////////////////////////////////////////////////////////
-		// If at final level, just count nof children preceding and exit
-		if (level == dag.leaf_level())
-		{
-			for (uint8 childBeforeChild = 0; childBeforeChild < child; ++childBeforeChild)
-			{
-				if (childMask & (1u << childBeforeChild))
-				{
-					const uint32 childIndex = dag.get_child_index(level - 1, nodeIndex, childMask, childBeforeChild);
-					const Leaf leaf = dag.get_leaf(childIndex);
-					nof_leaves += Utils::popcll(leaf.to_64());
-				}
-			}
-			const uint32 childIndex = dag.get_child_index(level - 1, nodeIndex, childMask, child);
-			const Leaf leaf = dag.get_leaf(childIndex);
-			const uint8 leafBitIndex =
-				(((path.path.x & 0x1) == 0) ? 0 : 4) |
-				(((path.path.y & 0x1) == 0) ? 0 : 2) |
-				(((path.path.z & 0x1) == 0) ? 0 : 1) |
-				(((path.path.x & 0x2) == 0) ? 0 : 32) |
-				(((path.path.y & 0x2) == 0) ? 0 : 16) |
-				(((path.path.z & 0x2) == 0) ? 0 : 8);
-			nof_leaves += Utils::popcll(leaf.to_64() & ((uint64(1) << leafBitIndex) - 1));
+        //////////////////////////////////////////////////////////////////////////
+        // Find out how many leafs are in the children preceding this
+        //////////////////////////////////////////////////////////////////////////
+        // If at final level, just count nof children preceding and exit
+        if (level == dag.leaf_level())
+        {
+            for (uint8 childBeforeChild = 0; childBeforeChild < child; ++childBeforeChild)
+            {
+                if (childMask & (1u << childBeforeChild))
+                {
+                    const uint32 childIndex = dag.get_child_index(level - 1, nodeIndex, childMask, childBeforeChild);
+                    const Leaf leaf = dag.get_leaf(childIndex);
+                    nof_leaves += Utils::popcll(leaf.to_64());
+                }
+            }
+            const uint32 childIndex = dag.get_child_index(level - 1, nodeIndex, childMask, child);
+            const Leaf leaf = dag.get_leaf(childIndex);
+            const uint8 leafBitIndex =
+                (((path.path.x & 0x1) == 0) ? 0 : 4) |
+                (((path.path.y & 0x1) == 0) ? 0 : 2) |
+                (((path.path.z & 0x1) == 0) ? 0 : 1) |
+                (((path.path.x & 0x2) == 0) ? 0 : 32) |
+                (((path.path.y & 0x2) == 0) ? 0 : 16) |
+                (((path.path.z & 0x2) == 0) ? 0 : 8);
+            nof_leaves += Utils::popcll(leaf.to_64() & ((uint64(1) << leafBitIndex) - 1));
 
-			break;
-		}
-		else
-		{
-			ASSUME(level > 0);
-			if (level > colors.get_color_tree_levels())
-			{
-				// Otherwise, fetch the next node (and accumulate leaves we pass by)
-				for (uint8 childBeforeChild = 0; childBeforeChild < child; ++childBeforeChild)
-				{
-					if (childMask & (1u << childBeforeChild))
-					{
-						const uint32 childIndex = dag.get_child_index(level - 1, nodeIndex, childMask, childBeforeChild);
-						const uint32 childNode = dag.get_node(level, childIndex);
-						nof_leaves += colors.get_leaves_count(level, childNode);
-					}
-				}
-			}
-			nodeIndex = dag.get_child_index(level - 1, nodeIndex, childMask, child);
-		}
-	}
+            break;
+        }
+        else
+        {
+            ASSUME(level > 0);
+            if (level > colors.get_color_tree_levels())
+            {
+                // Otherwise, fetch the next node (and accumulate leaves we pass by)
+                for (uint8 childBeforeChild = 0; childBeforeChild < child; ++childBeforeChild)
+                {
+                    if (childMask & (1u << childBeforeChild))
+                    {
+                        const uint32 childIndex = dag.get_child_index(level - 1, nodeIndex, childMask, childBeforeChild);
+                        const uint32 childNode = dag.get_node(level, childIndex);
+                        nof_leaves += colors.get_leaves_count(level, childNode);
+                    }
+                }
+            }
+            nodeIndex = dag.get_child_index(level - 1, nodeIndex, childMask, child);
+        }
+    }
 
-	if (!colorLeaf.is_valid() || !colorLeaf.is_valid_index(nof_leaves))
-	{
-	    invalidColor();
-		return;
-	}
+    if (!colorLeaf.is_valid() || !colorLeaf.is_valid_index(nof_leaves))
+    {
+        invalidColor();
+        return;
+    }
 
-	auto compressedColor = colorLeaf.get_color(nof_leaves);
-	uint32 color =
-		traceParams.debugColors == EDebugColors::ColorBits
-		? compressedColor.get_debug_hash()
-		: ColorUtils::float3_to_rgb888(
-			traceParams.debugColors == EDebugColors::MinColor
-			? compressedColor.get_min_color()
-			: traceParams.debugColors == EDebugColors::MaxColor
-			? compressedColor.get_max_color()
-			: traceParams.debugColors == EDebugColors::Weight
-			? make_float3(compressedColor.get_weight())
-			: compressedColor.get_color());
-	setColor(color);
+    auto compressedColor = colorLeaf.get_color(nof_leaves);
+    float3 baseColor = compressedColor.get_color(); // Get the base voxel color
+
+    // Override base color with white if flag is set
+    if (traceParams.useWhiteBaseColor)
+    {
+        baseColor = make_float3(1.0f, 1.0f, 1.0f);
+    }
+
+    // Default to potentially overridden base color
+    float3 finalColor = baseColor;
+
+    // Apply smooth shading only if enabled and not in a debug color mode
+    if (traceParams.enableSmoothShading && traceParams.debugColors == EDebugColors::None)
+    {
+        // <<< START: SMOOTH SHADING >>>
+        // --- Neighbor Check ---
+        Path path_px = path;
+        path_px.path.x += 1;
+        Path path_nx = path;
+        path_nx.path.x -= 1;
+        Path path_py = path;
+        path_py.path.y += 1;
+        Path path_ny = path;
+        path_ny.path.y -= 1;
+        Path path_pz = path;
+        path_pz.path.z += 1;
+        Path path_nz = path;
+        path_nz.path.z -= 1;
+
+        float occ_px = dag_is_voxel_solid(dag, path_px) ? 1.0f : 0.0f;
+        float occ_nx = dag_is_voxel_solid(dag, path_nx) ? 1.0f : 0.0f;
+        float occ_py = dag_is_voxel_solid(dag, path_py) ? 1.0f : 0.0f;
+        float occ_ny = dag_is_voxel_solid(dag, path_ny) ? 1.0f : 0.0f;
+        float occ_pz = dag_is_voxel_solid(dag, path_pz) ? 1.0f : 0.0f;
+        float occ_nz = dag_is_voxel_solid(dag, path_nz) ? 1.0f : 0.0f;
+
+        // --- Normal Calculation (Finite Differences) ---
+        float3 normal = make_float3(
+            occ_nx - occ_px,
+            occ_ny - occ_py,
+            occ_nz - occ_pz);
+
+        // --- Normal Calculation + Lighting ---
+        float normalLenSq = dot(normal, normal);
+        if (normalLenSq > 0.001f) // Primary normal calculation
+        {
+            normal = normalize(normal);
+            float3 lightDir = normalize(make_float3(0.5f, 1.0f, 0.3f));
+            float NdotL = max(0.0f, dot(normal, lightDir));
+            float ambient = 0.2f;
+            float diffuseIntensity = ambient + (1.0f - ambient) * NdotL;
+            finalColor = baseColor * diffuseIntensity;
+        }
+        else // Fallback for zero normal
+        {
+            // Revert to using baseColor when the primary normal calculation fails
+            finalColor = baseColor;
+        }
+        // <<< END: Smooth Shading Logic Block >>>
+    }
+
+    // <<< Modified Final Color Calculation >>>
+    // Use finalColor which holds either the shaded color or the original baseColor
+    uint32 color =
+        traceParams.debugColors == EDebugColors::ColorBits
+            ? compressedColor.get_debug_hash()
+            : ColorUtils::float3_to_rgb888(
+                  traceParams.debugColors == EDebugColors::MinColor
+                      ? compressedColor.get_min_color()
+                  : traceParams.debugColors == EDebugColors::MaxColor
+                      ? compressedColor.get_max_color()
+                  : traceParams.debugColors == EDebugColors::Weight
+                      ? make_float3(compressedColor.get_weight())
+                      : finalColor); // Handles both smooth shading (if enabled) and other debug modes
+
+    setColor(color);
 }
 
-template<typename TDAG>
-inline __device__ bool intersect_ray_node_out_of_order(const TDAG& dag, const float3 rayOrigin, const float3 rayDirection)
+template <typename TDAG>
+inline __device__ bool intersect_ray_node_out_of_order(const TDAG &dag, const float3 rayOrigin, const float3 rayDirection)
 {
     const float3 rayDirectionInverse = make_float3(make_double3(1. / rayDirection.x, 1. / rayDirection.y, 1. / rayDirection.z));
 
-	// State
-	uint32 level = 0;
-	Path path(0, 0, 0);
+    // State
+    uint32 level = 0;
+    Path path(0, 0, 0);
 
-	StackEntry stack[MAX_LEVELS];
-	StackEntry cache;
-	Leaf cachedLeaf; // needed to iterate on the last few levels
+    StackEntry stack[MAX_LEVELS];
+    StackEntry cache;
+    Leaf cachedLeaf; // needed to iterate on the last few levels
 
-	cache.index = dag.get_first_node_index();
-	cache.childMask = Utils::child_mask(dag.get_node(0, cache.index));
-	cache.visitMask = cache.childMask & compute_intersection_mask<true>(0, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
+    cache.index = dag.get_first_node_index();
+    cache.childMask = Utils::child_mask(dag.get_node(0, cache.index));
+    cache.visitMask = cache.childMask & compute_intersection_mask<true>(0, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
 
-	// Traverse DAG
-	for (;;)
-	{
-		// Ascend if there are no children left.
-		{
-			uint32 newLevel = level;
-			while (newLevel > 0 && !cache.visitMask)
-			{
-				newLevel--;
-				cache = stack[newLevel];
-			}
+    // Traverse DAG
+    for (;;)
+    {
+        // Ascend if there are no children left.
+        {
+            uint32 newLevel = level;
+            while (newLevel > 0 && !cache.visitMask)
+            {
+                newLevel--;
+                cache = stack[newLevel];
+            }
 
-			if (newLevel == 0 && !cache.visitMask)
-			{
-				path = Path(0, 0, 0);
-				break;
-			}
+            if (newLevel == 0 && !cache.visitMask)
+            {
+                path = Path(0, 0, 0);
+                break;
+            }
 
-			path.ascend(level - newLevel);
-			level = newLevel;
-		}
+            path.ascend(level - newLevel);
+            level = newLevel;
+        }
 
-		// Find next child in order by the current ray's direction
-		const uint8 nextChild = 31 - __clz(cache.visitMask);
+        // Find next child in order by the current ray's direction
+        const uint8 nextChild = 31 - __clz(cache.visitMask);
 
-		// Mark it as handled
-		cache.visitMask &= ~(1u << nextChild);
+        // Mark it as handled
+        cache.visitMask &= ~(1u << nextChild);
 
-		// Intersect that child with the ray
-		{
-			path.descend(nextChild);
-			stack[level] = cache;
-			level++;
+        // Intersect that child with the ray
+        {
+            path.descend(nextChild);
+            stack[level] = cache;
+            level++;
 
-			// If we're at the final level, we have intersected a single voxel.
-			if (level == dag.levels)
-			{
-			    return true;
-			}
+            // If we're at the final level, we have intersected a single voxel.
+            if (level == dag.levels)
+            {
+                return true;
+            }
 
-			// Are we in an internal node?
-			if (level < dag.leaf_level())
-			{
-				cache.index = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
-				cache.childMask = Utils::child_mask(dag.get_node(level, cache.index));
-				cache.visitMask = cache.childMask &	compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
-			}
-			else
-			{
-				/* The second-to-last and last levels are different: the data
-				 * of these two levels (2^3 voxels) are packed densely into a
-				 * single 64-bit word.
-				 */
-				uint8 childMask;
+            // Are we in an internal node?
+            if (level < dag.leaf_level())
+            {
+                cache.index = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
+                cache.childMask = Utils::child_mask(dag.get_node(level, cache.index));
+                cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
+            }
+            else
+            {
+                /* The second-to-last and last levels are different: the data
+                 * of these two levels (2^3 voxels) are packed densely into a
+                 * single 64-bit word.
+                 */
+                uint8 childMask;
 
-				if (level == dag.leaf_level())
-				{
-					const uint32 addr = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
-					cachedLeaf = dag.get_leaf(addr);
-					childMask = cachedLeaf.get_first_child_mask();
-				}
-				else
-				{
-					childMask = cachedLeaf.get_second_child_mask(nextChild);
-				}
+                if (level == dag.leaf_level())
+                {
+                    const uint32 addr = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
+                    cachedLeaf = dag.get_leaf(addr);
+                    childMask = cachedLeaf.get_first_child_mask();
+                }
+                else
+                {
+                    childMask = cachedLeaf.get_second_child_mask(nextChild);
+                }
 
-				// No need to set the index for bottom nodes
-				cache.childMask = childMask;
-				cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
-			}
-		}
-	}
-	return false;
+                // No need to set the index for bottom nodes
+                cache.childMask = childMask;
+                cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
+            }
+        }
+    }
+    return false;
 }
 
 // Directed towards the sun
@@ -550,9 +691,9 @@ HOST_DEVICE float3 sun_direction()
 
 HOST_DEVICE float3 applyFog(float3 rgb,      // original color of the pixel
                             double distance, // camera to point distance
-                            double3 rayDir,   // camera to point vector
+                            double3 rayDir,  // camera to point vector
                             double3 rayOri,
-                            float fogDensity)  // camera position
+                            float fogDensity) // camera position
 {
 #if 0
     constexpr float fogDensity = 0.0001f;
@@ -566,8 +707,8 @@ HOST_DEVICE float3 applyFog(float3 rgb,      // original color of the pixel
 #endif
     double sunAmount = 1.01f * max(dot(rayDir, make_double3(sun_direction())), 0.0);
     float3 fogColor = lerp(make_float3(187, 242, 250) / 255.f, // blue
-                              make_float3(1.0f), // white
-                              float(pow(sunAmount, 30.0)));
+                           make_float3(1.0f),                  // white
+                           float(pow(sunAmount, 30.0)));
     return lerp(rgb, fogColor, clamp(float(fogAmount), 0.f, 1.f));
 }
 
@@ -586,12 +727,12 @@ HOST_DEVICE double3 ray_box_intersection(double3 orig, double3 dir, double3 box_
     return orig + dir * maxmin;
 }
 
-template<typename TDAG>
+template <typename TDAG>
 __global__ void Tracer::trace_shadows(const TraceShadowsParams params, const TDAG dag)
 {
     const uint2 pixel = make_uint2(
-            blockIdx.x * blockDim.x + threadIdx.x,
-            blockIdx.y * blockDim.y + threadIdx.y);
+        blockIdx.x * blockDim.x + threadIdx.x,
+        blockIdx.y * blockDim.y + threadIdx.y);
 
     if (pixel.x >= imageWidth || pixel.y >= imageHeight)
         return; // outside
@@ -609,11 +750,11 @@ __global__ void Tracer::trace_shadows(const TraceShadowsParams params, const TDA
         color = color * clamp(0.5f + light, 0.f, 1.f);
 
         color = applyFog(
-                color,
-                distance,
-                direction,
-                params.cameraPosition,
-                params.fogDensity);
+            color,
+            distance,
+            direction,
+            params.cameraPosition,
+            params.fogDensity);
 
         setColorImpl(color);
     };
@@ -624,10 +765,10 @@ __global__ void Tracer::trace_shadows(const TraceShadowsParams params, const TDA
 #if EXACT_SHADOWS || PER_VOXEL_FACE_SHADING
     const double3 rayOriginDouble = make_double3(rayOrigin);
     const double3 hitPosition = ray_box_intersection(
-            params.cameraPosition,
-            cameraRayDirection,
-            rayOriginDouble,
-            rayOriginDouble + 1);
+        params.cameraPosition,
+        cameraRayDirection,
+        rayOriginDouble,
+        rayOriginDouble + 1);
 #endif
 
 #if EXACT_SHADOWS
@@ -662,7 +803,8 @@ __global__ void Tracer::trace_shadows(const TraceShadowsParams params, const TDA
     {
 #if PER_VOXEL_FACE_SHADING
         const double3 voxelOriginToHitPosition = normalize(hitPosition - (rayOriginDouble + 0.5));
-        const auto truncate_signed = [](double3 d) { return make_double3(int32(d.x), int32(d.y), int32(d.z)); };
+        const auto truncate_signed = [](double3 d)
+        { return make_double3(int32(d.x), int32(d.y), int32(d.z)); };
         const double3 normal = truncate_signed(voxelOriginToHitPosition / max(abs(voxelOriginToHitPosition)));
         setColor(max(0.f, dot(make_float3(normal), sun_direction())), distance, nv);
 #else
@@ -697,13 +839,13 @@ __global__ void Tracer::trace_shadows(const TraceShadowsParams params, const TDA
 }
 
 template __global__ void Tracer::trace_paths<BasicDAG>(TracePathsParams, BasicDAG);
-template __global__ void Tracer::trace_paths<HashDAG >(TracePathsParams, HashDAG);
+template __global__ void Tracer::trace_paths<HashDAG>(TracePathsParams, HashDAG);
 
 template __global__ void Tracer::trace_shadows<BasicDAG>(TraceShadowsParams, BasicDAG);
-template __global__ void Tracer::trace_shadows<HashDAG >(TraceShadowsParams, HashDAG);
+template __global__ void Tracer::trace_shadows<HashDAG>(TraceShadowsParams, HashDAG);
 
-#define COLORS_IMPL(Dag, Colors)\
-template __global__ void Tracer::trace_colors<Dag, Colors>(TraceColorsParams, Dag, Colors);
+#define COLORS_IMPL(Dag, Colors) \
+    template __global__ void Tracer::trace_colors<Dag, Colors>(TraceColorsParams, Dag, Colors);
 
 COLORS_IMPL(BasicDAG, BasicDAGUncompressedColors)
 COLORS_IMPL(BasicDAG, BasicDAGCompressedColors)

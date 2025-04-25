@@ -178,6 +178,15 @@ The current rendering approach uses a multi-stage raytracing pipeline:
 ### TODO
 
 -   [ ] Marching cubes doesn't handle thin surfaces well
--   [ ] Consider distance field, dual contouring, or using filled volumes instead
+-   [ ] Consider distance field, surface nets, dual contouring, or using filled volumes instead
 -   [ ] Or find a way to make marching cubes work
 -   [ ] get it working on GPU with cuda after fixing
+
+25 march
+
+-   [ ] use an interpolation scheme instead of mc
+-   [x] get a working 2d example first
+
+Single-Pass GPU Solid Voxelization for Real-Time Applications
+
+Precomputed Safety Shapes for Efficient and Accurate Height-field Rendering

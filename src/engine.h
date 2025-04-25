@@ -107,6 +107,8 @@ public:
         uint3 copySourcePath = make_uint3(0, 0, 0);
         uint3 copyDestPath = make_uint3(0, 0, 0);
         uint3 path;
+        bool enableSmoothShading = true;
+        bool useWhiteBaseColor = false;
     };
     EditConfig config;
 
