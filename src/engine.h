@@ -15,14 +15,6 @@
 
 #include "glfont.h"
 
-// Include necessary headers
-#include <array>
-#include <functional>
-
-// Forward declarations
-class MarchingCubes;
-
-/// Available DAG types
 enum class EDag
 {
     BasicDagUncompressedColors,
@@ -31,31 +23,16 @@ enum class EDag
     HashDag
 };
 
-/// Rendering mode options
-enum class RenderMode
-{
-    Default,       // Existing rendering
-    MarchingCubes, // Marching cubes rendering
-};
-
 constexpr uint32 CNumDags = 4;
 
-/// String representation of DAG type
 std::string dag_to_string(EDag dag);
-
-/// String representation of tool type
 std::string tool_to_string(ETool tool);
 
-/// Main engine class responsible for managing DAGs, camera views, and replay functionality
 class Engine
 {
 public:
-    //-------------------------------------------------------------------------
-    // Core Engine Members
-    //-------------------------------------------------------------------------
-    static Engine engine; /// Singleton instance
+    static Engine engine;
 
-    /// DAG data structures
     BasicDAG basicDag;
     HashDAG hashDag;
     BasicDAGCompressedColors basicDagCompressedColors;
@@ -64,21 +41,14 @@ public:
     HashDAGColors hashDagColors;
     HashDAGUndoRedo undoRedo;
     DAGInfo dagInfo;
+    CameraView view;
 
-    /// Rendering configuration
-    RenderMode renderMode = RenderMode::Default;
+    CameraView targetView;
+    double targetLerpSpeed = 1;
+    CameraView initialView;
+    bool moveToTarget = false;
+    double targetLerpTime = 0;
 
-    //-------------------------------------------------------------------------
-    // Camera & View Management
-    //-------------------------------------------------------------------------
-    CameraView view;            /// Current camera view
-    CameraView targetView;      /// Target camera view for smooth transitions
-    CameraView initialView;     /// Initial camera view for transitions
-    bool moveToTarget = false;  /// Flag to enable camera transition
-    double targetLerpTime = 0;  /// Current interpolation time
-    double targetLerpSpeed = 1; /// Speed of camera transition
-
-    /// Initialize camera transition to target view
     inline void init_target_lerp()
     {
         moveToTarget = true;
@@ -86,17 +56,11 @@ public:
         targetLerpTime = 0;
     }
 
-    //-------------------------------------------------------------------------
-    // Replay & Recording
-    //-------------------------------------------------------------------------
-    ReplayManager replayReader;  /// Manages replay loading and playback
-    VideoManager videoManager;   /// Manages video recording and playback
-    StatsRecorder statsRecorder; /// Records statistics for benchmarking
+    ReplayManager replayReader;
+    VideoManager videoManager;
 
-    //-------------------------------------------------------------------------
-    // Configuration & State
-    //-------------------------------------------------------------------------
-    /// Structure to store configuration options for editing and tool use
+    StatsRecorder statsRecorder;
+
     struct EditConfig
     {
         EDag currentDag = EDag::HashDag;
@@ -107,30 +71,9 @@ public:
         uint3 copySourcePath = make_uint3(0, 0, 0);
         uint3 copyDestPath = make_uint3(0, 0, 0);
         uint3 path;
-        bool enableSmoothShading = true;
-        bool useWhiteBaseColor = false;
     };
     EditConfig config;
 
-    //-------------------------------------------------------------------------
-    // Public Interface Methods
-    //-------------------------------------------------------------------------
-    /// Initialize the engine with headless mode flag
-    void init(bool headLess);
-
-    /// Run the main loop (either graphics or headless)
-    void loop();
-
-    /// Clean up resources
-    void destroy();
-
-    /// Set the current DAG type
-    void set_dag(EDag dag);
-
-    /// Toggle between fullscreen and windowed mode
-    void toggle_fullscreen();
-
-    /// Template function to perform editing on the DAG
     template <typename T, typename... TArgs>
     void edit(TArgs &&...Args)
     {
@@ -141,7 +84,7 @@ public:
 
         BasicStats stats;
 
-        /// is disabled inside the function
+        // is disabled inside the function
         hashDag.data.prefetch();
 
         stats.start_work("creating edit tool");
@@ -158,22 +101,15 @@ public:
 
         statsRecorder.report("radius", tool.radius);
     }
+    void set_dag(EDag dag);
 
-    // Marching Cubes related methods
-    void setupMarchingCubes();
-    void updateMarchingCubes();
-    void renderMarchingCubes();
-    void cleanupMarchingCubes();
+    void init(bool headLess);
+    void loop();
+    void destroy();
 
-    // Marching Cubes functions
-    std::vector<float> marchingCubes(const std::vector<float> &field, int gridSize, float isoLevel);
-    std::vector<float> generateHashDAGField(int gridSize, float scale);
+    void toggle_fullscreen();
 
 private:
-    //-------------------------------------------------------------------------
-    // Input & State Management
-    //-------------------------------------------------------------------------
-    /// Internal structure to track the input state (keyboard, mouse, etc.)
     struct InputState
     {
         std::vector<bool> keys = std::vector<bool>(GLFW_KEY_LAST + 1, false);
@@ -181,14 +117,58 @@ private:
         double mousePosX = 0;
         double mousePosY = 0;
     };
-    InputState state; /// Current input state
 
-    /// Input callback handlers
+    GLFWwindow *window = nullptr;
+    GLuint image = 0;
+
+    InputState state;
+
+    GLuint programID = 0;
+    GLint textureID = 0;
+    GLuint fsvao = 0;
+
+    double dt = 0;
+    bool headLess = false;
+    bool firstReplay = true;
+    bool printMemoryStats = false;
+    bool shadows = true;
+    float shadowBias = 1;
+    float fogDensity = 0;
+    bool showUI = true;
+    float swirlPeriod = 100;
+    bool enableSwirl = true;
+    bool fullscreen = false;
+    Vector3 transformRotation = {0, 0, 0};
+    float transformScale = 1;
+    double time = 0;
+    uint32 frameIndex = 0;
+    std::unique_ptr<DAGTracer> tracer;
+    ReplayManager replayWriter;
+
+    glf::Context *fontctx = nullptr;
+    glf::Buffer *dynamicText = nullptr;
+    glf::Buffer *staticText = nullptr;
+
+    struct Timings
+    {
+        double pathsTime = 0;
+        double colorsTime = 0;
+        double shadowsTime = 0;
+        double totalTime = 0;
+    };
+    Timings timings;
+
+    uint32 lastEditTimestamp = 0;
+    uint32 lastEditFrame = 0;
+
+    bool is_dag_valid(EDag dag) const;
+    void next_dag();
+    void previous_dag();
+
     void key_callback_impl(int key, int scancode, int action, int mods);
     void mouse_callback_impl(int button, int action, int mods);
     void scroll_callback_impl(double xoffset, double yoffset);
 
-    /// Static callback functions for GLFW events
     static void key_callback(GLFWwindow *, int key, int scancode, int action, int mods)
     {
         Engine::engine.key_callback_impl(key, scancode, action, mods);
@@ -202,130 +182,10 @@ private:
         Engine::engine.scroll_callback_impl(xoffset, yoffset);
     }
 
-    //-------------------------------------------------------------------------
-    // DAG Management
-    //-------------------------------------------------------------------------
-    bool is_dag_valid(EDag dag) const;
-    void next_dag();
-    void previous_dag();
-
-    //-------------------------------------------------------------------------
-    // Graphics Resources
-    //-------------------------------------------------------------------------
-    GLFWwindow *window = nullptr;       /// GLFW window handle
-    GLuint image = 0;                   /// OpenGL texture handle
-    GLuint programID = 0;               /// OpenGL program ID
-    GLint textureID = 0;                /// OpenGL texture ID
-    GLuint fsvao = 0;                   /// OpenGL full-screen quad VAO
-    glf::Context *fontctx = nullptr;    /// Font rendering context
-    glf::Buffer *dynamicText = nullptr; /// Dynamic text buffer
-    glf::Buffer *staticText = nullptr;  /// Static text buffer
-
-    //-------------------------------------------------------------------------
-    // Engine State
-    //-------------------------------------------------------------------------
-    double dt = 0;                         /// Delta time for each frame
-    bool headLess = false;                 /// Flag for headless mode
-    bool firstReplay = true;               /// Flag for the first replay
-    bool printMemoryStats = false;         /// Flag to print memory stats
-    bool shadows = true;                   /// Enable shadows
-    float shadowBias = 1;                  /// Shadow bias for rendering
-    float fogDensity = 0;                  /// Fog density for rendering
-    bool showUI = true;                    /// Flag to show the UI
-    float swirlPeriod = 100;               /// Swirl period for special effects
-    bool enableSwirl = true;               /// Enable swirl effect
-    bool fullscreen = false;               /// Fullscreen mode
-    Vector3 transformRotation = {0, 0, 0}; /// Camera rotation
-    float transformScale = 1;              /// Camera scale
-    double time = 0;                       /// Global time
-    uint32 frameIndex = 0;                 /// Frame index for tracking frames
-    std::unique_ptr<DAGTracer> tracer;     /// DAG tracing functionality
-    ReplayManager replayWriter;            /// Manages replay writing
-
-    struct Timings
-    {
-        double pathsTime = 0;
-        double colorsTime = 0;
-        double shadowsTime = 0;
-        double totalTime = 0;
-    };
-    Timings timings; /// Timing measurements for profiling
-
-    uint32 lastEditTimestamp = 0; /// Timestamp of last edit operation
-    uint32 lastEditFrame = 0;     /// Frame index of last edit operation
-
-    //-------------------------------------------------------------------------
-    // Core Engine Update Loop
-    //-------------------------------------------------------------------------
-    /// Main update function
     void tick();
 
-    /// Core engine subsystems
-    void handleCameraAndReplayControls();
-    void handleCameraPresets();
-    void handleCameraMovement();
-    void handleReplayCompletion();
-
-    void processVoxelData();
-    double resolveVoxelPaths();
-    void updateMousePath();
-    double resolveVoxelColors();
-    double resolveVoxelShadows();
-
-    void processEditing();
-    void applyEditingTool();
-    void updateTimingsAndStats();
-    void recordReplayStats();
-
-    //-------------------------------------------------------------------------
-    // Graphics & Rendering
-    //-------------------------------------------------------------------------
-    /// Graphics initialization
     void init_graphics();
-    void initializeGLFW();
-    void initializeGLEW();
-    void setupOpenGLState();
-    void loadFonts();
-    void createFullScreenQuad();
 
-    /// Main loop and frame processing
     void loop_headless();
     void loop_graphics();
-    void processFrame();
-    void pollInputs();
-    void renderFrame();
-    void renderMainScene();
-    void renderUI();
-    void renderUIElements();
-
-    /// Template rendering functions for UI components
-    template <typename FormatterFunc>
-    void renderToolSpecificUI(FormatterFunc &F, float hx, float dx, float &y);
-
-    template <typename FormatterFunc>
-    void renderTimingStatistics(FormatterFunc &F, float hx, float sx, float dx, float &y);
-
-    template <typename FormatterFunc>
-    void renderMemoryStatistics(FormatterFunc &F, float hx, float sx, float dx, float &y);
-
-    template <typename FormatterFunc>
-    void renderEditStatistics(FormatterFunc &F, float hx, float sx, float dx, float &y);
-
-    /// Check if the application should exit
-    bool shouldExitApplication();
-
-    // Marching Cubes related variables
-    GLuint marchingCubesVAO = 0;
-    GLuint marchingCubesVBO = 0;
-    GLuint marchingCubesVertexCount = 0;
-    GLuint marchingCubesShaderProgram = 0;
-
-    int m_gridSize = 256;
-
-    // Shader locations
-    GLint mcModelLoc = -1;
-    GLint mcViewLoc = -1;
-    GLint mcProjLoc = -1;
-    GLint mcLightPosLoc = -1;
-    GLint mcViewPosLoc = -1;
 };

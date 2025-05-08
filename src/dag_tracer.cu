@@ -143,7 +143,7 @@ float DAGTracer::resolve_paths(const CameraView &camera, const DAGInfo &dagInfo,
 }
 
 template <typename TDAG, typename TDAGColors>
-float DAGTracer::resolve_colors(const TDAG &dag, const TDAGColors &colors, EDebugColors debugColors, uint32 debugColorsIndexLevel, ToolInfo toolInfo, bool enableSmoothShading, bool useWhiteBaseColor)
+float DAGTracer::resolve_colors(const TDAG &dag, const TDAGColors &colors, EDebugColors debugColors, uint32 debugColorsIndexLevel, ToolInfo toolInfo)
 {
     PROFILE_FUNCTION();
 
@@ -162,8 +162,6 @@ float DAGTracer::resolve_colors(const TDAG &dag, const TDAGColors &colors, EDebu
     traceParams.toolInfo = toolInfo;
     traceParams.pathsSurface = pathsBuffer.cudaSurface;
     traceParams.colorsSurface = colorsBuffer.cudaSurface;
-    traceParams.enableSmoothShading = enableSmoothShading;
-    traceParams.useWhiteBaseColor = useWhiteBaseColor;
 
     CUDA_CHECK_ERROR();
 
@@ -234,7 +232,7 @@ template float DAGTracer::resolve_shadows<BasicDAG>(const CameraView &, const DA
 template float DAGTracer::resolve_shadows<HashDAG>(const CameraView &, const DAGInfo &, const HashDAG &, float, float);
 
 #define COLORS_IMPL(Dag, Colors) \
-    template float DAGTracer::resolve_colors<Dag, Colors>(const Dag &, const Colors &, EDebugColors, uint32, ToolInfo, bool, bool);
+    template float DAGTracer::resolve_colors<Dag, Colors>(const Dag &, const Colors &, EDebugColors, uint32, ToolInfo);
 
 COLORS_IMPL(BasicDAG, BasicDAGUncompressedColors)
 COLORS_IMPL(BasicDAG, BasicDAGCompressedColors)

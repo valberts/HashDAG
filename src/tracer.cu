@@ -2,72 +2,6 @@
 #include "dags/basic_dag/basic_dag.h"
 #include "dags/hash_dag/hash_dag.h"
 #include "dags/hash_dag/hash_dag_colors.h"
-#include "utils.h" //Utils for child_mask
-
-template <typename TDAG>
-DEVICE bool dag_is_voxel_solid(const TDAG &dag, const Path &p)
-{
-    // Check if the path coordinates are within the DAG bounds
-    // (Assuming max coordinate is 2^levels - 1)
-    const uint32 maxCoord = (1u << dag.levels) - 1;
-    if (p.path.x > maxCoord || p.path.y > maxCoord || p.path.z > maxCoord)
-    {
-        return false; // Path is outside the DAG domain
-    }
-
-    uint32 level = 0;
-    uint32 nodeIndex = dag.get_first_node_index();
-
-    // Traverse internal nodes
-    while (level < dag.leaf_level())
-    {
-        const uint32 node = dag.get_node(level, nodeIndex);
-        const uint8 childMask = Utils::child_mask(node);
-        const uint8 child = p.child_index(level + 1, dag.levels); // Child index for the *next* level
-
-        // If the child corresponding to the path doesn't exist, the voxel is empty
-        if (!(childMask & (1u << child)))
-        {
-            return false;
-        }
-
-        // Descend to the child node
-        nodeIndex = dag.get_child_index(level, nodeIndex, childMask, child);
-        level++;
-    }
-
-    // Now at the leaf level (level == dag.leaf_level())
-    // Get the Leaf node associated with the current nodeIndex
-    const Leaf leaf = dag.get_leaf(nodeIndex);
-
-    /* // Other implementation using direct 64-bit leafBitIndex:
-    // Determine the bit index within the 64-bit leaf mask corresponding
-    // to the final two levels of the path.
-    const uint8 leafBitIndex =
-        (((p.path.x & 0x1) == 0) ? 0 : 4) |  // child_index(dag.levels, dag.levels) bit 2 (X)
-        (((p.path.y & 0x1) == 0) ? 0 : 2) |  // child_index(dag.levels, dag.levels) bit 1 (Y)
-        (((p.path.z & 0x1) == 0) ? 0 : 1) |  // child_index(dag.levels, dag.levels) bit 0 (Z)
-        (((p.path.x & 0x2) == 0) ? 0 : 32) | // child_index(dag.leaf_level() + 1, dag.levels) bit 2 (X) * 8
-        (((p.path.y & 0x2) == 0) ? 0 : 16) | // child_index(dag.leaf_level() + 1, dag.levels) bit 1 (Y) * 8
-        (((p.path.z & 0x2) == 0) ? 0 : 8);   // child_index(dag.leaf_level() + 1, dag.levels) bit 0 (Z) * 8
-
-    // Check if the specific bit corresponding to the path is set in the leaf mask
-    return (leaf.to_64() & (uint64(1) << leafBitIndex)) != 0;
-    */
-
-    // Alternative implementation using get_second_child_mask:
-    // Calculate index of the first-level child octant (0-7)
-    const uint8 firstChildIndex = p.child_index(dag.leaf_level() + 1, dag.levels);
-
-    // Get the 8-bit mask for that specific sub-cube using the Leaf method
-    const uint8 secondChildMask = leaf.get_second_child_mask(firstChildIndex);
-
-    // Calculate the index within that 2x2x2 sub-cube (0-7)
-    const uint8 secondChildIndex = p.child_index(dag.levels, dag.levels); // Index at the final level
-
-    // Check if the bit is set in the 8-bit mask
-    return (secondChildMask & (1u << secondChildIndex)) != 0;
-}
 
 // order: (shouldFlipX, shouldFlipY, shouldFlipZ)
 DEVICE uint8 next_child(uint8 order, uint8 mask)
@@ -513,69 +447,6 @@ __global__ void Tracer::trace_colors(const TraceColorsParams traceParams, const 
     }
 
     auto compressedColor = colorLeaf.get_color(nof_leaves);
-    float3 baseColor = compressedColor.get_color(); // Get the base voxel color
-
-    // Override base color with white if flag is set
-    if (traceParams.useWhiteBaseColor)
-    {
-        baseColor = make_float3(1.0f, 1.0f, 1.0f);
-    }
-
-    // Default to potentially overridden base color
-    float3 finalColor = baseColor;
-
-    // Apply smooth shading only if enabled and not in a debug color mode
-    if (traceParams.enableSmoothShading && traceParams.debugColors == EDebugColors::None)
-    {
-        // <<< START: SMOOTH SHADING >>>
-        // --- Neighbor Check ---
-        Path path_px = path;
-        path_px.path.x += 1;
-        Path path_nx = path;
-        path_nx.path.x -= 1;
-        Path path_py = path;
-        path_py.path.y += 1;
-        Path path_ny = path;
-        path_ny.path.y -= 1;
-        Path path_pz = path;
-        path_pz.path.z += 1;
-        Path path_nz = path;
-        path_nz.path.z -= 1;
-
-        float occ_px = dag_is_voxel_solid(dag, path_px) ? 1.0f : 0.0f;
-        float occ_nx = dag_is_voxel_solid(dag, path_nx) ? 1.0f : 0.0f;
-        float occ_py = dag_is_voxel_solid(dag, path_py) ? 1.0f : 0.0f;
-        float occ_ny = dag_is_voxel_solid(dag, path_ny) ? 1.0f : 0.0f;
-        float occ_pz = dag_is_voxel_solid(dag, path_pz) ? 1.0f : 0.0f;
-        float occ_nz = dag_is_voxel_solid(dag, path_nz) ? 1.0f : 0.0f;
-
-        // --- Normal Calculation (Finite Differences) ---
-        float3 normal = make_float3(
-            occ_nx - occ_px,
-            occ_ny - occ_py,
-            occ_nz - occ_pz);
-
-        // --- Normal Calculation + Lighting ---
-        float normalLenSq = dot(normal, normal);
-        if (normalLenSq > 0.001f) // Primary normal calculation
-        {
-            normal = normalize(normal);
-            float3 lightDir = normalize(make_float3(0.5f, 1.0f, 0.3f));
-            float NdotL = max(0.0f, dot(normal, lightDir));
-            float ambient = 0.2f;
-            float diffuseIntensity = ambient + (1.0f - ambient) * NdotL;
-            finalColor = baseColor * diffuseIntensity;
-        }
-        else // Fallback for zero normal
-        {
-            // Revert to using baseColor when the primary normal calculation fails
-            finalColor = baseColor;
-        }
-        // <<< END: Smooth Shading Logic Block >>>
-    }
-
-    // <<< Modified Final Color Calculation >>>
-    // Use finalColor which holds either the shaded color or the original baseColor
     uint32 color =
         traceParams.debugColors == EDebugColors::ColorBits
             ? compressedColor.get_debug_hash()
@@ -586,8 +457,7 @@ __global__ void Tracer::trace_colors(const TraceColorsParams traceParams, const 
                       ? compressedColor.get_max_color()
                   : traceParams.debugColors == EDebugColors::Weight
                       ? make_float3(compressedColor.get_weight())
-                      : finalColor); // Handles both smooth shading (if enabled) and other debug modes
-
+                      : compressedColor.get_color());
     setColor(color);
 }
 

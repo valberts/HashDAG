@@ -101,12 +101,6 @@ namespace Tracer
 
         cudaSurfaceObject_t pathsSurface;
 
-        // Added flag
-        bool enableSmoothShading;
-
-        // Added flag
-        bool useWhiteBaseColor;
-
         // Out
         cudaSurfaceObject_t colorsSurface;
     };
