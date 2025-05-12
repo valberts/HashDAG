@@ -177,6 +177,7 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
     // State
     uint32 level = 0;
     Path path(0, 0, 0);
+    Path preHitPath(0, 0, 0);
 
     StackEntry stack[MAX_LEVELS];
     StackEntry cache;
@@ -200,8 +201,9 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
 
             if (newLevel == 0 && !cache.visitMask)
             {
+                // ray misses
                 path = Path(0, 0, 0);
-                break;
+                break; // exit loop on miss
             }
 
             path.ascend(level - newLevel);
@@ -216,6 +218,17 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
 
         // Intersect that child with the ray
         {
+            // BEFORE descending into what might be the final voxel:
+            if (level + 1 == dag.levels)
+            {
+                // THIS IS THE POINT OF INTEREST!
+                // 'path' currently refers to the PARENT of the voxel we are about to hit.
+                // 'level' is the level of this parent.
+                // 'cache.index' is the nodeIndex of this parent.
+                // 'cache.childMask' is the childMask of this parent.
+                // 'nextChild' is the child index within this parent that WILL BE the hit.
+                preHitPath = path; // Capture the parent path
+            }
             path.descend(nextChild);
             stack[level] = cache;
             level++;
@@ -223,17 +236,18 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
             // If we're at the final level, we have intersected a single voxel.
             if (level == dag.levels)
             {
-                break;
+                break; // exit loop on hit
             }
 
             // Are we in an internal node?
             if (level < dag.leaf_level())
             {
+                // Update cache using parent info from stack entry (stack[level-1])
                 cache.index = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
                 cache.childMask = Utils::child_mask(dag.get_node(level, cache.index));
                 cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
             }
-            else
+            else // in packed leaf levels
             {
                 /* The second-to-last and last levels are different: the data
                  * of these two levels (2^3 voxels) are packed densely into a
@@ -259,7 +273,14 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
         }
     }
 
+    // stop one step before hitting the final voxel
+    // if (!path.is_null())
+    // {
+    //     path.ascend(1);
+    // }
+
     path.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.pathsSurface);
+    preHitPath.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.preHitPathsSurface);
 }
 
 template <typename TDAG, typename TDAGColors>
@@ -277,7 +298,9 @@ __global__ void Tracer::trace_colors(const TraceColorsParams traceParams, const 
         surf2Dwrite(color, traceParams.colorsSurface, (int)sizeof(uint32) * pixel.x, pixel.y, cudaBoundaryModeClamp);
     };
 
+    // const Path loadedPreHitPath = Path::load(pixel.x, pixel.y, traceParams.preHitPathsSurface);
     const Path path = Path::load(pixel.x, pixel.y, traceParams.pathsSurface);
+
     if (path.is_null())
     {
         setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f));

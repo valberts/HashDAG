@@ -20,6 +20,8 @@ DAGTracer::DAGTracer(bool headLess)
 
         setupArray(pathArray, pathsBuffer, 32, 32, 32, 32);
         setupArray(colorsArray, colorsBuffer, 8, 8, 8, 8);
+
+        setupArray(preHitPathArray, preHitPathsBuffer, 32, 32, 32, 32);
     }
     else
     {
@@ -36,6 +38,8 @@ DAGTracer::DAGTracer(bool headLess)
 
         setupImage(pathsBuffer, pathsImage, GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT);
         setupImage(colorsBuffer, colorsImage, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE);
+
+        setupImage(preHitPathsBuffer, preHitPathsImage, GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT);
 
         pathCache = Memory::malloc<uint3>("path cache", sizeof(uint3), EMemoryType::GPU_Managed);
     }
@@ -120,9 +124,14 @@ float DAGTracer::resolve_paths(const CameraView &camera, const DAGInfo &dagInfo,
     const dim3 grid_dim = dim3(imageWidth / block_dim.x + 1, imageHeight / block_dim.y + 1);
 
     if (!headLess)
+    {
         pathsBuffer.map_surface();
+        preHitPathsBuffer.map_surface();
+    }
+
     auto traceParams = get_trace_params(camera, dag.levels, dagInfo);
     traceParams.pathsSurface = pathsBuffer.cudaSurface;
+    traceParams.preHitPathsSurface = preHitPathsBuffer.cudaSurface;
 
     CUDA_CHECK_ERROR();
 
@@ -137,8 +146,10 @@ float DAGTracer::resolve_paths(const CameraView &camera, const DAGInfo &dagInfo,
     cudaEventElapsedTime(&elapsed, eventBeg, eventEnd);
     CUDA_CHECK_ERROR();
     if (!headLess)
+    {
         pathsBuffer.unmap_surface();
-
+        preHitPathsBuffer.unmap_surface();
+    }
     return elapsed;
 }
 
@@ -156,12 +167,16 @@ float DAGTracer::resolve_colors(const TDAG &dag, const TDAGColors &colors, EDebu
         pathsBuffer.map_surface();
     if (!headLess)
         colorsBuffer.map_surface();
+    if (!headLess)
+        preHitPathsBuffer.map_surface();
+
     Tracer::TraceColorsParams traceParams;
     traceParams.debugColors = debugColors;
     traceParams.debugColorsIndexLevel = debugColorsIndexLevel;
     traceParams.toolInfo = toolInfo;
     traceParams.pathsSurface = pathsBuffer.cudaSurface;
     traceParams.colorsSurface = colorsBuffer.cudaSurface;
+    traceParams.preHitPathsSurface = preHitPathsBuffer.cudaSurface;
 
     CUDA_CHECK_ERROR();
 
@@ -178,6 +193,8 @@ float DAGTracer::resolve_colors(const TDAG &dag, const TDAGColors &colors, EDebu
         pathsBuffer.unmap_surface();
     if (!headLess)
         colorsBuffer.unmap_surface();
+    if (!headLess)
+        preHitPathsBuffer.unmap_surface();
 
     return elapsed;
 }

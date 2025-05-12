@@ -84,6 +84,7 @@ namespace Tracer
 
         // Out
         cudaSurfaceObject_t pathsSurface;
+        cudaSurfaceObject_t preHitPathsSurface; // one step before hit
     };
 
     template <typename TDAG>
@@ -103,6 +104,7 @@ namespace Tracer
 
         // Out
         cudaSurfaceObject_t colorsSurface;
+        cudaSurfaceObject_t preHitPathsSurface;
     };
 
     template <typename TDAG, typename TDAGColors>

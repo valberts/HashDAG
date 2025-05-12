@@ -31,12 +31,17 @@ public:
 private:
     GLuint pathsImage = 0;
     GLuint colorsImage = 0;
+    GLuint preHitPathsImage = 0;
 
     CudaGLBuffer pathsBuffer;
     CudaGLBuffer colorsBuffer;
 
     cudaArray *pathArray = nullptr;
     cudaArray *colorsArray = nullptr;
+
+    // Prehit info
+    cudaArray *preHitPathArray = nullptr;
+    CudaGLBuffer preHitPathsBuffer;
 
     uint3 *pathCache = nullptr;
     cudaEvent_t eventBeg, eventEnd;
