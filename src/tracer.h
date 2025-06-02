@@ -74,6 +74,18 @@ private:
 
 namespace Tracer
 {
+
+    struct Ray
+    {
+        float3 origin, direction, invDirection;
+        float tmin, tmax;
+
+        static HOST_DEVICE Ray create(float3 origin, float3 direction)
+        {
+            return {origin, direction, 1.0f / direction, 0.0f, std::numeric_limits<float>::max()};
+        }
+    };
+
     struct TracePathsParams
     {
         // In
@@ -101,6 +113,12 @@ namespace Tracer
         ToolInfo toolInfo;
 
         cudaSurfaceObject_t pathsSurface;
+
+        // from TracePathsParams
+        double3 cameraPosition;
+        double3 rayMin;
+        double3 rayDDx;
+        double3 rayDDy;
 
         // Out
         cudaSurfaceObject_t colorsSurface;

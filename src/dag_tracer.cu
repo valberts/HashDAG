@@ -154,7 +154,7 @@ float DAGTracer::resolve_paths(const CameraView &camera, const DAGInfo &dagInfo,
 }
 
 template <typename TDAG, typename TDAGColors>
-float DAGTracer::resolve_colors(const TDAG &dag, const TDAGColors &colors, EDebugColors debugColors, uint32 debugColorsIndexLevel, ToolInfo toolInfo)
+float DAGTracer::resolve_colors(const CameraView &camera, const DAGInfo &dagInfo, const TDAG &dag, const TDAGColors &colors, EDebugColors debugColors, uint32 debugColorsIndexLevel, ToolInfo toolInfo)
 {
     PROFILE_FUNCTION();
 
@@ -177,6 +177,18 @@ float DAGTracer::resolve_colors(const TDAG &dag, const TDAGColors &colors, EDebu
     traceParams.pathsSurface = pathsBuffer.cudaSurface;
     traceParams.colorsSurface = colorsBuffer.cudaSurface;
     traceParams.preHitPathsSurface = preHitPathsBuffer.cudaSurface;
+
+    // --- NEW: Populate ray parameters ---
+    // Use the get_trace_params helper function, similar to resolve_paths
+    // Note: get_trace_params expects dag.levels, not the full dagInfo for its last param.
+    // If dagInfo is available, you can extract dag.levels. Or if dag is available, use dag.levels.
+    // Assuming 'dag' object is the one with '.levels'
+    auto pathRayParams = get_trace_params(camera, dag.levels, dagInfo); // dagInfo needed for bounds too
+    traceParams.cameraPosition = pathRayParams.cameraPosition;
+    traceParams.rayMin = pathRayParams.rayMin;
+    traceParams.rayDDx = pathRayParams.rayDDx;
+    traceParams.rayDDy = pathRayParams.rayDDy;
+    // --- END NEW ---
 
     CUDA_CHECK_ERROR();
 
@@ -249,7 +261,7 @@ template float DAGTracer::resolve_shadows<BasicDAG>(const CameraView &, const DA
 template float DAGTracer::resolve_shadows<HashDAG>(const CameraView &, const DAGInfo &, const HashDAG &, float, float);
 
 #define COLORS_IMPL(Dag, Colors) \
-    template float DAGTracer::resolve_colors<Dag, Colors>(const Dag &, const Colors &, EDebugColors, uint32, ToolInfo);
+    template float DAGTracer::resolve_colors<Dag, Colors>(const CameraView &camera, const DAGInfo &dagInfo, const Dag &, const Colors &, EDebugColors, uint32, ToolInfo);
 
 COLORS_IMPL(BasicDAG, BasicDAGUncompressedColors)
 COLORS_IMPL(BasicDAG, BasicDAGCompressedColors)

@@ -8,8 +8,8 @@
 
 namespace DAGUtils
 {
-    template<typename TDAG>
-    inline void print_stats(const TDAG& dag)
+    template <typename TDAG>
+    inline void print_stats(const TDAG &dag)
     {
         printf("##############################################\n");
         std::vector<std::unordered_map<uint32, uint32>> multipliers(MAX_LEVELS);
@@ -85,61 +85,59 @@ namespace DAGUtils
             totalTotalChildren += totalChildrenForLevel;
 
             printf(
-                    "\nlevel %d:"
-                    "\n\tSVO: %" PRIu64
-                    "\n\tDAG: %" PRIu64
-                    "\n\tdifference: %" PRId64
-                    "\n\tcompression: %2.2f%%"
-                    "\n\t1: %u"
-                    "\n\t2: %u"
-                    "\n\t3: %u"
-                    "\n\t4: %u"
-                    "\n\t5: %u"
-                    "\n\t6: %u"
-                    "\n\t7: %u"
-                    "\n\t8: %u"
-                    "\n\tavg children: %2.2f",
-                    level,
-                    SVO,
-                    DAG,
-                    difference,
-                    SVO == 0 ? 0 : (int(1000. * double(DAG) / double(SVO)) / 10.),
-                    totalChildrenForLevel2.counts[0],
-                    totalChildrenForLevel2.counts[1],
-                    totalChildrenForLevel2.counts[2],
-                    totalChildrenForLevel2.counts[3],
-                    totalChildrenForLevel2.counts[4],
-                    totalChildrenForLevel2.counts[5],
-                    totalChildrenForLevel2.counts[6],
-                    totalChildrenForLevel2.counts[7],
-                    8 * double(realChildrenForLevel) / double(totalChildrenForLevel)
-            );
-        }
-        int64 difference = int64(totalSVO) - int64(totalDAG);
-        printf(
-                "\ntotal:"
+                "\nlevel %d:"
                 "\n\tSVO: %" PRIu64
                 "\n\tDAG: %" PRIu64
                 "\n\tdifference: %" PRId64
                 "\n\tcompression: %2.2f%%"
-                "\n\tavg children: %2.2f"
-                "\n\n",
-                totalSVO,
-                totalDAG,
+                "\n\t1: %u"
+                "\n\t2: %u"
+                "\n\t3: %u"
+                "\n\t4: %u"
+                "\n\t5: %u"
+                "\n\t6: %u"
+                "\n\t7: %u"
+                "\n\t8: %u"
+                "\n\tavg children: %2.2f",
+                level,
+                SVO,
+                DAG,
                 difference,
-                totalSVO == 0 ? 0 : (int(1000. * double(totalDAG) / double(totalSVO)) / 10.),
-                8 * double(totalRealChildren) / double(totalTotalChildren)
-        );
+                SVO == 0 ? 0 : (int(1000. * double(DAG) / double(SVO)) / 10.),
+                totalChildrenForLevel2.counts[0],
+                totalChildrenForLevel2.counts[1],
+                totalChildrenForLevel2.counts[2],
+                totalChildrenForLevel2.counts[3],
+                totalChildrenForLevel2.counts[4],
+                totalChildrenForLevel2.counts[5],
+                totalChildrenForLevel2.counts[6],
+                totalChildrenForLevel2.counts[7],
+                8 * double(realChildrenForLevel) / double(totalChildrenForLevel));
+        }
+        int64 difference = int64(totalSVO) - int64(totalDAG);
+        printf(
+            "\ntotal:"
+            "\n\tSVO: %" PRIu64
+            "\n\tDAG: %" PRIu64
+            "\n\tdifference: %" PRId64
+            "\n\tcompression: %2.2f%%"
+            "\n\tavg children: %2.2f"
+            "\n\n",
+            totalSVO,
+            totalDAG,
+            difference,
+            totalSVO == 0 ? 0 : (int(1000. * double(totalDAG) / double(totalSVO)) / 10.),
+            8 * double(totalRealChildren) / double(totalTotalChildren));
         printf("Total DAG voxels: %" PRIu64 "\n", totalDAGVoxels);
         printf("Total SVO voxels: %" PRIu64 "\n", totalSVOVoxels);
         printf("##############################################\n");
     }
 
-    template<typename TDAG>
-    HOST_DEVICE bool get_value(const TDAG& dag, const Path path)
+    template <typename TDAG>
+    HOST_DEVICE bool get_value(const TDAG &dag, const Path path)
     {
         PROFILE_FUNCTION_SLOW();
-    	
+
         uint32 nodeIndex = dag.get_first_node_index();
         for (uint32 level = 0; level < dag.levels; level++)
         {
@@ -158,12 +156,12 @@ namespace DAGUtils
             {
                 const Leaf leaf = dag.get_leaf(nodeIndex);
                 const uint8 leafBitIndex = uint8(
-                        (((path.path.x & 0x1) == 0) ? 0 : 4) |
-                        (((path.path.y & 0x1) == 0) ? 0 : 2) |
-                        (((path.path.z & 0x1) == 0) ? 0 : 1) |
-                        (((path.path.x & 0x2) == 0) ? 0 : 32) |
-                        (((path.path.y & 0x2) == 0) ? 0 : 16) |
-                        (((path.path.z & 0x2) == 0) ? 0 : 8));
+                    (((path.path.x & 0x1) == 0) ? 0 : 4) |
+                    (((path.path.y & 0x1) == 0) ? 0 : 2) |
+                    (((path.path.z & 0x1) == 0) ? 0 : 1) |
+                    (((path.path.x & 0x2) == 0) ? 0 : 32) |
+                    (((path.path.y & 0x2) == 0) ? 0 : 16) |
+                    (((path.path.z & 0x2) == 0) ? 0 : 8));
                 return leaf.to_64() & (uint64(1) << leafBitIndex);
             }
         }
@@ -171,47 +169,47 @@ namespace DAGUtils
         return true;
     }
 
-    template<typename TDAG>
+    template <typename TDAG>
     HOST_DEVICE_RECURSIVE bool is_empty_impl(
-            const TDAG& dag,
-            uint32 nodeIndex,
-            Path path,
-            const uint32 level,
-            const uint32 maxLevel,
-            const uint3 start,
-            const uint3 size)
+        const TDAG &dag,
+        uint32 nodeIndex,
+        Path path,
+        const uint32 level,
+        const uint32 maxLevel,
+        const uint3 start,
+        const uint3 size)
     {
         if (level == maxLevel)
         {
             return false;
         }
 
-        const auto shouldEdit = [start, size](auto& p, uint32 shift)
+        const auto shouldEdit = [start, size](auto &p, uint32 shift)
         {
             const uint3 boundsMin = p.path << shift;
             const uint3 boundsMax = boundsMin + make_uint3(uint32((1 << shift) - 1)); // Inclusive
             const uint3 inMin = start;
             const uint3 inMax = start + size;
             return !(
-                    boundsMin.x >= inMax.x ||
-                    boundsMin.y >= inMax.y ||
-                    boundsMin.z >= inMax.z ||
-                    boundsMax.x <= inMin.x ||
-                    boundsMax.y <= inMin.y ||
-                    boundsMax.z <= inMin.z ||
-                    inMin.x >= boundsMax.x ||
-                    inMin.y >= boundsMax.y ||
-                    inMin.z >= boundsMax.z ||
-                    inMax.x <= boundsMin.x ||
-                    inMax.y <= boundsMin.y ||
-                    inMax.z <= boundsMin.z);
+                boundsMin.x >= inMax.x ||
+                boundsMin.y >= inMax.y ||
+                boundsMin.z >= inMax.z ||
+                boundsMax.x <= inMin.x ||
+                boundsMax.y <= inMin.y ||
+                boundsMax.z <= inMin.z ||
+                inMin.x >= boundsMax.x ||
+                inMin.y >= boundsMax.y ||
+                inMin.z >= boundsMax.z ||
+                inMax.x <= boundsMin.x ||
+                inMax.y <= boundsMin.y ||
+                inMax.z <= boundsMin.z);
         };
         if (level < C_leafLevel && !shouldEdit(path, dag.levels - level))
         {
             return true;
         }
 
-        const uint32* nodePtr = dag.data.get_sys_ptr(level, nodeIndex);
+        const uint32 *nodePtr = dag.data.get_sys_ptr(level, nodeIndex);
         const uint8 childMask = Utils::child_mask(nodePtr[0]);
 
         // Iterate children
@@ -224,13 +222,13 @@ namespace DAGUtils
             {
                 const uint32 childNodeIndex = nodePtr[nodeChildOffset++];
                 const bool empty = is_empty_impl(
-                        dag,
-                        childNodeIndex,
-                        newPath,
-                        level + 1,
-                        maxLevel,
-                        start,
-                        size);
+                    dag,
+                    childNodeIndex,
+                    newPath,
+                    level + 1,
+                    maxLevel,
+                    start,
+                    size);
                 if (!empty)
                 {
                     return false;
@@ -239,47 +237,47 @@ namespace DAGUtils
         }
         return true;
     }
-    template<typename TDAG>
+    template <typename TDAG>
     HOST_DEVICE bool is_empty(
-            const TDAG& dag,
-            const uint32 maxLevel,
-            const uint3 start,
-            const uint3 size)
+        const TDAG &dag,
+        const uint32 maxLevel,
+        const uint3 start,
+        const uint3 size)
     {
         PROFILE_FUNCTION_SLOW();
         checkAlways(maxLevel <= C_leafLevel);
         return is_empty_impl(dag, dag.get_first_node_index(), Path(make_uint3(0)), 0, maxLevel, start, size);
     }
 
-    template<int32 ThreadsHeight, uint32 level, typename TDAG>
+    template <int32 ThreadsHeight, uint32 level, typename TDAG>
     HOST_DEVICE void get_values_impl(
-            const TDAG& dag,
-            uint32 nodeIndex,
-            Path path,
-            bool* __restrict__ values,
-            const uint3 start,
-            const uint3 size,
-            std::vector<std::function<void()>>& tasks)
+        const TDAG &dag,
+        uint32 nodeIndex,
+        Path path,
+        bool *__restrict__ values,
+        const uint3 start,
+        const uint3 size,
+        std::vector<std::function<void()>> &tasks)
     {
-        const auto shouldEdit = [start, size](auto& p, uint32 shift)
+        const auto shouldEdit = [start, size](auto &p, uint32 shift)
         {
             const uint3 boundsMin = p.path << shift;
             const uint3 boundsMax = boundsMin + make_uint3(uint32((1 << shift) - 1)); // Inclusive
             const uint3 inMin = start;
             const uint3 inMax = start + size;
             return !(
-                    boundsMin.x >= inMax.x ||
-                    boundsMin.y >= inMax.y ||
-                    boundsMin.z >= inMax.z ||
-                    boundsMax.x <= inMin.x ||
-                    boundsMax.y <= inMin.y ||
-                    boundsMax.z <= inMin.z ||
-                    inMin.x >= boundsMax.x ||
-                    inMin.y >= boundsMax.y ||
-                    inMin.z >= boundsMax.z ||
-                    inMax.x <= boundsMin.x ||
-                    inMax.y <= boundsMin.y ||
-                    inMax.z <= boundsMin.z);
+                boundsMin.x >= inMax.x ||
+                boundsMin.y >= inMax.y ||
+                boundsMin.z >= inMax.z ||
+                boundsMax.x <= inMin.x ||
+                boundsMax.y <= inMin.y ||
+                boundsMax.z <= inMin.z ||
+                inMin.x >= boundsMax.x ||
+                inMin.y >= boundsMax.y ||
+                inMin.z >= boundsMax.z ||
+                inMax.x <= boundsMin.x ||
+                inMax.y <= boundsMin.y ||
+                inMax.z <= boundsMin.z);
         };
         if (level < C_leafLevel && !shouldEdit(path, dag.levels - level))
         {
@@ -292,7 +290,7 @@ namespace DAGUtils
         if constexpr (level == C_leafLevel)
 #endif
         {
-            const uint32* nodePtr = dag.data.get_sys_ptr(level, nodeIndex);
+            const uint32 *nodePtr = dag.data.get_sys_ptr(level, nodeIndex);
             const uint32 low = nodePtr[0];
             const uint32 high = nodePtr[1];
 
@@ -328,7 +326,7 @@ namespace DAGUtils
         }
         else
         {
-            const uint32* nodePtr = dag.data.get_sys_ptr(level, nodeIndex);
+            const uint32 *nodePtr = dag.data.get_sys_ptr(level, nodeIndex);
             const uint8 childMask = Utils::child_mask(nodePtr[0]);
 
             // Iterate children
@@ -343,13 +341,13 @@ namespace DAGUtils
                     const auto lambda = [&dag, &tasks, childNodeIndex, newPath, values, start, size]()
                     {
                         get_values_impl<ThreadsHeight, level + 1>(
-                                dag,
-                                childNodeIndex,
-                                newPath,
-                                values,
-                                start,
-                                size,
-                                tasks);
+                            dag,
+                            childNodeIndex,
+                            newPath,
+                            values,
+                            start,
+                            size,
+                            tasks);
                     };
                     if (dag.leaf_level() - level == ThreadsHeight)
                     {
@@ -363,12 +361,12 @@ namespace DAGUtils
             }
         }
     }
-    template<int32 ThreadsHeight, typename TDAG>
+    template <int32 ThreadsHeight, typename TDAG>
     HOST_DEVICE void get_values(
-            const TDAG& dag,
-            bool*__restrict__ values,
-            const uint3 start,
-            const uint3 size)
+        const TDAG &dag,
+        bool *__restrict__ values,
+        const uint3 start,
+        const uint3 size)
     {
         PROFILE_FUNCTION();
         EDIT_TIMES(Stats stats);
@@ -387,19 +385,20 @@ namespace DAGUtils
         std::vector<std::thread> threads;
 #if NUM_THREADS == 0
         threads.reserve(tasks.size());
-        for (auto& task : tasks)
+        for (auto &task : tasks)
         {
             threads.emplace_back(task);
         }
 #else
-        std::atomic<uint32> taskCounter{ 0 };
+        std::atomic<uint32> taskCounter{0};
         threads.reserve(NUM_THREADS);
         const auto lambda = [&](uint32 threadIndex)
         {
             for (;;)
             {
                 const uint32 taskIndex = taskCounter.fetch_add(1);
-                if (taskIndex >= tasks.size()) break;
+                if (taskIndex >= tasks.size())
+                    break;
                 tasks[taskIndex]();
                 if (taskIndex % 100 == 0)
                 {
@@ -409,23 +408,24 @@ namespace DAGUtils
         };
         for (uint32 index = 0; index < NUM_THREADS; index++)
         {
-            threads.emplace_back([index, &lambda]() { lambda(index); });
+            threads.emplace_back([index, &lambda]()
+                                 { lambda(index); });
         }
 #endif
         EDIT_TIMES(printf("%" PRIu64 " tasks, %" PRIu64 " threads\n", uint64(tasks.size()), uint64(threads.size())));
 
-        for (auto& thread : threads)
+        for (auto &thread : threads)
         {
             thread.join();
         }
     }
 
     // Copy paste from tracer.cu
-    template<typename TDAG, typename TDAGColors>
-    HOST_DEVICE auto get_color(const TDAG& dag, const TDAGColors& colors, const Path path)
+    template <typename TDAG, typename TDAGColors>
+    HOST_DEVICE auto get_color(const TDAG &dag, const TDAGColors &colors, const Path path)
     {
         PROFILE_FUNCTION_SLOW();
-    	
+
         uint64 nof_leaves = 0;
 
         uint32 colorNodeIndex = 0;
@@ -486,12 +486,12 @@ namespace DAGUtils
                 const uint32 childIndex = dag.get_child_index(level - 1, nodeIndex, childMask, child);
                 const Leaf leaf = dag.get_leaf(childIndex);
                 const uint8 leafBitIndex = uint8(
-                        (((path.path.x & 0x1) == 0) ? 0 : 4) |
-                        (((path.path.y & 0x1) == 0) ? 0 : 2) |
-                        (((path.path.z & 0x1) == 0) ? 0 : 1) |
-                        (((path.path.x & 0x2) == 0) ? 0 : 32) |
-                        (((path.path.y & 0x2) == 0) ? 0 : 16) |
-                        (((path.path.z & 0x2) == 0) ? 0 : 8));
+                    (((path.path.x & 0x1) == 0) ? 0 : 4) |
+                    (((path.path.y & 0x1) == 0) ? 0 : 2) |
+                    (((path.path.z & 0x1) == 0) ? 0 : 1) |
+                    (((path.path.x & 0x2) == 0) ? 0 : 32) |
+                    (((path.path.y & 0x2) == 0) ? 0 : 16) |
+                    (((path.path.z & 0x2) == 0) ? 0 : 8));
                 nof_leaves += Utils::popcll(leaf.to_64() & ((uint64(1) << leafBitIndex) - 1));
 
                 break;
@@ -522,13 +522,13 @@ namespace DAGUtils
         return colorLeaf.get_color(nof_leaves);
     }
 
-    template<typename TDAG>
+    template <typename TDAG>
     EnclosedLeavesType fix_enclosed_leaves_impl(
-            uint32 level,
-            uint32 nodeIndex,
-            TDAG& dag,
-            StaticArray<EnclosedLeavesType>& enclosedLeaves,
-            const uint32 topLevels)
+        uint32 level,
+        uint32 nodeIndex,
+        TDAG &dag,
+        StaticArray<EnclosedLeavesType> &enclosedLeaves,
+        const uint32 topLevels)
     {
         if (level == dag.leaf_level())
         {
@@ -566,7 +566,7 @@ namespace DAGUtils
                     checkEqual(count, newCount);
                 }
 
-                uint32& nodeRef = dag.data[nodeIndex];
+                uint32 &nodeRef = dag.data[nodeIndex];
                 check(node == nodeRef);
                 nodeRef = uint32(newCount << 8) | childMask;
 
@@ -604,14 +604,14 @@ namespace DAGUtils
             }
         }
     }
-    template<typename TDAG>
-    void fix_enclosed_leaves(TDAG& dag, StaticArray<EnclosedLeavesType>& enclosedLeaves, uint32 topLevels)
+    template <typename TDAG>
+    void fix_enclosed_leaves(TDAG &dag, StaticArray<EnclosedLeavesType> &enclosedLeaves, uint32 topLevels)
     {
         SCOPED_STATS("fix_enclosed_leaves");
 
         printf("%" PRIu64 " enclosed leaves\n", enclosedLeaves.size());
 
-        for (auto& enclosedLeave : enclosedLeaves)
+        for (auto &enclosedLeave : enclosedLeaves)
             enclosedLeave = 0;
 
         fix_enclosed_leaves_impl(0, dag.get_first_node_index(), dag, enclosedLeaves, topLevels);

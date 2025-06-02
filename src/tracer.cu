@@ -2,6 +2,7 @@
 #include "dags/basic_dag/basic_dag.h"
 #include "dags/hash_dag/hash_dag.h"
 #include "dags/hash_dag/hash_dag_colors.h"
+#include "dags/dag_utils.h"
 
 // order: (shouldFlipX, shouldFlipY, shouldFlipZ)
 DEVICE uint8 next_child(uint8 order, uint8 mask)
@@ -16,6 +17,97 @@ DEVICE uint8 next_child(uint8 order, uint8 mask)
     return 0;
 }
 
+template <typename TDAG>
+DEVICE float get_trilinear_density(const TDAG &dag, float3 world_point)
+{
+    // Shift world_point to align interpolation grid with voxel centers
+    float3 sample_point = world_point - make_float3(0.5f, 0.5f, 0.5f);
+
+    // Determine the integer coordinates of the bottom-left-front "anchor" corner
+    // of the 1x1x1 conceptual cube that sample_point falls within.
+    float3 floor_sample_point = make_float3(
+        floorf(sample_point.x), // Use floorf for float, or floor for double
+        floorf(sample_point.y),
+        floorf(sample_point.z));
+    uint3 base_voxel_coord = make_uint3(
+        static_cast<unsigned int>(floor_sample_point.x),
+        static_cast<unsigned int>(floor_sample_point.y),
+        static_cast<unsigned int>(floor_sample_point.z));
+
+    // Get occupancy values for the 8 corners of this cell
+    float V[8];
+    for (int i = 0; i < 8; ++i)
+    {
+        Path cornerPath(make_uint3(
+            base_voxel_coord.x + ((i & 1) ? 1 : 0),
+            base_voxel_coord.y + ((i & 2) ? 1 : 0),
+            base_voxel_coord.z + ((i & 4) ? 1 : 0)));
+        V[i] = DAGUtils::get_value(dag, cornerPath) ? 1.0f : 0.0f;
+    }
+
+    // Calculate local coordinates (weights) within this 1x1x1 cell
+    // These are now relative to the corner of the cell containing the shifted sample_point
+    float3 local_coords = sample_point - floor_sample_point;
+
+    // Trilinear interpolation (same formula as before)
+    float u = local_coords.x;
+    float v = local_coords.y;
+    float w = local_coords.z;
+
+    float c00 = V[0] * (1 - u) + V[1] * u;
+    float c10 = V[2] * (1 - u) + V[3] * u;
+    float c01 = V[4] * (1 - u) + V[5] * u;
+    float c11 = V[6] * (1 - u) + V[7] * u;
+
+    float c0 = c00 * (1 - v) + c10 * v;
+    float c1 = c01 * (1 - v) + c11 * v;
+
+    return c0 * (1 - w) + c1 * w;
+}
+
+DEVICE bool ray_box_intersect(
+    const float3 &ray_origin,
+    const float3 &ray_direction,
+    const float3 &ray_direction_inverse,
+    const float3 &box_min,
+    const float3 &box_max,
+    float &t_entry, // out parameter for the t-value of entry into the AABB
+    float &t_exit   // out parameter for the t-value of exit from the AABB
+)
+{
+    // 1. Calculate inverse direction: Pre-calculating 1/direction avoids repeated divisions.
+    // float3 inv_dir = make_float3(1.0f / ray_direction.x, 1.0f / ray_direction.y, 1.0f / ray_direction.z);
+    // Note: This can lead to issues if ray_direction components are zero.
+    // Robust implementations handle this (e.g., if ray_direction.x is 0, and ray_origin.x is not between box_min.x and box_max.x, then no intersection with X-slab).
+    // For simplicity, many basic implementations assume non-zero direction components or that the logic handles infinities correctly.
+
+    // 2. Calculate t-values for intersection with planes of each slab
+    //    (box_plane_coord - ray_origin_coord) * inv_dir_coord
+    float3 t_min_planes = (box_min - ray_origin) * ray_direction_inverse; // t-values for hitting the 'min' faces (xmin, ymin, zmin)
+    float3 t_max_planes = (box_max - ray_origin) * ray_direction_inverse; // t-values for hitting the 'max' faces (xmax, ymax, zmax)
+
+    // 3. Determine entry and exit t for each slab (dimension)
+    //    If inv_dir.x is negative, t_min_planes.x will be for the max_x plane and t_max_planes.x for min_x plane.
+    //    So, min() and max() correctly find the actual entry and exit for the slab regardless of ray direction.
+    float t_enter_x = min(t_min_planes.x, t_max_planes.x);
+    float t_exit_x = max(t_min_planes.x, t_max_planes.x);
+
+    float t_enter_y = min(t_min_planes.y, t_max_planes.y);
+    float t_exit_y = max(t_min_planes.y, t_max_planes.y);
+
+    float t_enter_z = min(t_min_planes.z, t_max_planes.z);
+    float t_exit_z = max(t_min_planes.z, t_max_planes.z);
+
+    // 4. Find the overall latest entry point and earliest exit point
+    t_entry = max(max(t_enter_x, t_enter_y), t_enter_z); // Latest entry into any slab
+    t_exit = min(min(t_exit_x, t_exit_y), t_exit_z);     // Earliest exit from any slab
+
+    // 5. Perform the intersection test
+    //    - t_entry < t_exit: The entry point must be before the exit point for an overlap.
+    //    - t_exit >= 0.0f: The box must not be entirely behind the ray's origin.
+    //      (If t_exit < 0, the entire intersection is behind the ray).
+    return t_entry < t_exit && t_exit >= 0.0f;
+}
 template <bool isRoot, typename TDAG>
 DEVICE uint8 compute_intersection_mask(
     uint32 level,
@@ -173,77 +265,103 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
         (rayDirection.x < 0.f ? 4 : 0) +
         (rayDirection.y < 0.f ? 2 : 0) +
         (rayDirection.z < 0.f ? 1 : 0);
+    // --- Outer loop for attempting multiple hits ---
+    // This loop allows us to continue searching if a ray march fails
+    // but the DAG traversal had found a coarse hit.
+    const int MAX_SEE_THROUGH_ATTEMPTS = pow(2, dag.levels); // potentially pierce through every voxel in a straight line
 
-    // State
-    uint32 level = 0;
-    Path path(0, 0, 0);
-    Path preHitPath(0, 0, 0);
+    Path final_stored_path(0, 0, 0);
+    Path final_stored_preHitPath(0, 0, 0);
+    float final_hit_t = -1.0f; // Will store the t-value of the *successful* smooth hit
 
-    StackEntry stack[MAX_LEVELS];
-    StackEntry cache;
-    Leaf cachedLeaf; // needed to iterate on the last few levels
+    // Traversal state needs to be managed carefully across attempts.
+    // For a simple "continue from where we left off", we need to modify
+    // the main DAG traversal's visitMasks.
+    // A simpler (but potentially less efficient for many see-throughs)
+    // way is to restart traversal but tell it to ignore previous hit voxels.
+    // For now, let's illustrate a more integrated approach.
 
-    cache.index = dag.get_first_node_index();
-    cache.childMask = Utils::child_mask(dag.get_node(0, cache.index));
-    cache.visitMask = cache.childMask & compute_intersection_mask<true>(0, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
+    // Initial DAG traversal setup (done once before the see-through loop)
+    uint32 initial_level_state = 0;
+    Path initial_path_state(0, 0, 0);
+    StackEntry initial_stack_state[MAX_LEVELS]; // Store the full stack
+    StackEntry initial_cache_state;
+    initial_cache_state.index = dag.get_first_node_index();
+    initial_cache_state.childMask = Utils::child_mask(dag.get_node(0, initial_cache_state.index));
+    initial_cache_state.visitMask = initial_cache_state.childMask & compute_intersection_mask<true>(0, initial_path_state, dag, rayOrigin, rayDirection, rayDirectionInverse);
 
-    // Traverse DAG
-    for (;;)
+    for (int attempt = 0; attempt < MAX_SEE_THROUGH_ATTEMPTS; ++attempt)
     {
-        // Ascend if there are no children left.
+        // State for the current traversal attempt
+        uint32 level = initial_level_state; // Start from root or last good point
+        Path path = initial_path_state;     // Current path in DAG
+        Path preHitPath(0, 0, 0);           // Parent of the voxel to be ray marched
+
+        StackEntry stack[MAX_LEVELS];
+        for (int i = 0; i < MAX_LEVELS; ++i)
+            stack[i] = initial_stack_state[i]; // Copy stack
+
+        StackEntry cache = initial_cache_state; // Current node's cache
+        Leaf cachedLeaf;
+
+        // If it's not the first attempt, we will continue the traversal from where the last attempt left off
+
+        // --- DAG TRAVERSAL ---
+        for (;;) // Inner DAG traversal loop
         {
-            uint32 newLevel = level;
-            while (newLevel > 0 && !cache.visitMask)
+            // Ascend if there are no children left.
+
             {
-                newLevel--;
-                cache = stack[newLevel];
+                uint32 newLevel = level;
+                while (newLevel > 0 && !cache.visitMask) // If no more visitable children at current level
+                {
+                    newLevel--;
+                    cache = stack[newLevel]; // Pop parent's state from stack
+                }
+                if (newLevel == 0 && !cache.visitMask) // Back at root and still no visitable children
+                {
+                    // Ray truly misses the rest of the DAG
+                    if (attempt == 0)
+                    {                                            // Only if first attempt also misses everything
+                        final_stored_path = Path(0, 0, 0);       // Mark path as null
+                        final_stored_preHitPath = Path(0, 0, 0); // Mark preHitPath as null
+                    }
+                    // JUMP to the end of all attempts, as no more surfaces can be found
+                    goto end_attempts; // EXIT 1: Ray misses the entire DAG
+                }
+                path.ascend(level - newLevel);
+                level = newLevel;
             }
+            // Find next child in order by the current ray's direction
+            const uint8 nextChild = next_child(rayChildOrder, cache.visitMask);
+            cache.visitMask &= ~(1u << nextChild); // Mark as visited for THIS parent
 
-            if (newLevel == 0 && !cache.visitMask)
-            {
-                // ray misses
-                path = Path(0, 0, 0);
-                break; // exit loop on miss
-            }
+            // Store parent state *before* modifying 'cache' for descent
+            StackEntry parent_cache_for_stack = cache;
 
-            path.ascend(level - newLevel);
-            level = newLevel;
-        }
-
-        // Find next child in order by the current ray's direction
-        const uint8 nextChild = next_child(rayChildOrder, cache.visitMask);
-
-        // Mark it as handled
-        cache.visitMask &= ~(1u << nextChild);
-
-        // Intersect that child with the ray
-        {
-            // BEFORE descending into what might be the final voxel:
+            // BEFORE descending into what MIGHT be the final voxel:
             if (level + 1 == dag.levels)
             {
-                // THIS IS THE POINT OF INTEREST!
                 // 'path' currently refers to the PARENT of the voxel we are about to hit.
-                // 'level' is the level of this parent.
-                // 'cache.index' is the nodeIndex of this parent.
-                // 'cache.childMask' is the childMask of this parent.
-                // 'nextChild' is the child index within this parent that WILL BE the hit.
-                preHitPath = path; // Capture the parent path
+                preHitPath = path;
             }
             path.descend(nextChild);
-            stack[level] = cache;
+            stack[level] = parent_cache_for_stack; // Push parent's state (with its updated visitMask)
             level++;
 
             // If we're at the final level, we have intersected a single voxel.
             if (level == dag.levels)
             {
-                break; // exit loop on hit
+                // BREAK from the inner DAG traversal loop.
+                // Control flow will proceed to the ray marching section for 'path' and 'preHitPath'.
+                break; // EXIT 2: Reached a leaf voxel - DAG traversal complete
             }
 
             // Are we in an internal node?
             if (level < dag.leaf_level())
             {
                 // Update cache using parent info from stack entry (stack[level-1])
-                cache.index = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
+                cache.index = dag.get_child_index(level - 1, stack[level - 1].index, stack[level - 1].childMask, nextChild);
                 cache.childMask = Utils::child_mask(dag.get_node(level, cache.index));
                 cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
             }
@@ -253,34 +371,190 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
                  * of these two levels (2^3 voxels) are packed densely into a
                  * single 64-bit word.
                  */
-                uint8 childMask;
-
+                uint8 childMask_leaf;
                 if (level == dag.leaf_level())
                 {
-                    const uint32 addr = dag.get_child_index(level - 1, cache.index, cache.childMask, nextChild);
+                    const uint32 addr = dag.get_child_index(level - 1, stack[level - 1].index, stack[level - 1].childMask, nextChild);
                     cachedLeaf = dag.get_leaf(addr);
-                    childMask = cachedLeaf.get_first_child_mask();
+                    childMask_leaf = cachedLeaf.get_first_child_mask();
                 }
                 else
                 {
-                    childMask = cachedLeaf.get_second_child_mask(nextChild);
+                    childMask_leaf = cachedLeaf.get_second_child_mask(nextChild);
                 }
-
                 // No need to set the index for bottom nodes
-                cache.childMask = childMask;
+                cache.childMask = childMask_leaf;
                 cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
             }
+        } // End of inner DAG traversal loop
+
+        // if (!dag_hit_this_attempt)
+        // {
+        //     // Should have been caught by the ascend logic if no DAG hit possible
+        //     if (attempt == 0)
+        //     {
+        //         final_stored_path = Path(0, 0, 0);
+        //         final_stored_preHitPath = Path(0, 0, 0);
+        //     }
+        //     goto end_attempts;
+        // }
+
+        // --------------------- RAY MARCHING ----------------------------
+        // The DAG traversal above found a coarse voxel hit (stored in 'path')
+        // and its parent (stored in 'preHitPath'). Now we refine this hit
+        // by marching along the ray within a small local region.
+
+        // STEP 1: Define Local Marching Bounding Box
+        // ------------------------------------------
+        // 1a. Get the world-space corner of the 2x2x2 parent cell identified by 'preHitPath'.
+        //     The '1' in as_position(1) likely relates to the level difference for a 2x2x2 cell.
+        float3 bounds_min = preHitPath.as_position(1);
+        // 1b. Define the max corner of this 2x2x2 cell.
+        float3 bounds_max = make_float3(
+            bounds_min.x + 2.0f,
+            bounds_min.y + 2.0f,
+            bounds_min.z + 2.0f);
+
+        // 1c. Expand the box by one voxel in all directions.
+        //     This helps find surfaces that might be slightly outside the initial 2x2x2 cell,
+        //     especially due to trilinear interpolation effects or if the hit voxel is at an edge.
+        bounds_min = make_float3(bounds_min.x - 1.0f, bounds_min.y - 1.0f, bounds_min.z - 1.0f);
+        bounds_max = make_float3(bounds_max.x + 1.0f, bounds_max.y + 1.0f, bounds_max.z + 1.0f);
+
+        // STEP 2: Intersect Ray with Local Marching Box
+        // ---------------------------------------------
+        float march_t_start, march_t_end;
+        bool can_march = ray_box_intersect(rayOrigin, rayDirection, rayDirectionInverse,
+                                           bounds_min, bounds_max,
+                                           march_t_start, march_t_end);
+
+        // Initialize hit_t to -1.0 (no hit found yet).
+        float current_hit_t = -1.0f; // t for this specific ray march attempt
+
+        // STEP 3: Initialize Ray Marching Parameters
+        // ------------------------------------------
+        if (can_march)
+        {
+            // Start marching from the entry point into the local box.
+            float current_t = march_t_start;
+            float step_size = 0.25f;
+            int max_steps = static_cast<int>((march_t_end - march_t_start) / step_size) + 5;
+            max_steps = min(max_steps, 100);
+            float density_threshold = 0.5f;
+            float3 current_pos_march = rayOrigin + current_t * rayDirection;
+            float prev_density = get_trilinear_density(dag, current_pos_march);
+
+            // STEP 4: March Along the Ray within the Local Box
+            // -----------------------------------------------
+            while (step_size > 0.01f)
+            {
+                current_t += step_size;
+                if (current_t > march_t_end)
+                {
+                    break;
+                }
+                current_pos_march = rayOrigin + current_t * rayDirection;
+                float current_density = get_trilinear_density(dag, current_pos_march);
+                if (prev_density < density_threshold && current_density >= density_threshold)
+                {
+                    current_hit_t = current_t;
+                    current_t -= step_size;
+                    step_size *= 0.5f;
+                    continue;
+                }
+                prev_density = current_density;
+            }
+            // for (int i = 0; i < max_steps; ++i)
+            // {
+            //     current_t += step_size;
+            //     if (current_t > march_t_end) // outside of bounding box, stop
+            //         break;
+            //     // Get initial density at the starting point of the march.
+            //     current_pos_march = rayOrigin + current_t * rayDirection;
+            //     float current_density = get_trilinear_density(dag, current_pos_march);
+            //     if ((prev_density < density_threshold && current_density >= density_threshold) ||
+            //         (prev_density >= density_threshold && current_density < density_threshold))
+            //     {
+            //         if (abs(current_density - prev_density) > 1e-6f)
+            //         {
+            //             float t_interp_fraction = (density_threshold - prev_density) / (current_density - prev_density);
+            //             current_hit_t = (current_t - step_size) + t_interp_fraction * step_size;
+            //         }
+            //         else
+            //         {
+            //             current_hit_t = current_t;
+            //         }
+            //         // we hit something, stop
+            //         break;
+            //     }
+            //     prev_density = current_density;
+            // }
+        } // end if(can_march)
+
+        // STEP 5: Handle Ray Marching Result
+        // ----------------------------------
+        // --- DECIDE whether to store this hit or continue ---
+        if (current_hit_t >= 0.0f)
+        {
+            // Smooth surface found! This is our final hit.
+            final_stored_path = path;             // The coarse voxel of this successful march
+            final_stored_preHitPath = preHitPath; // Its parent
+            final_hit_t = current_hit_t;          // Store the t-value of the smooth hit
+
+            // JUMP to the end of all attempts, as we've found our surface.
+            goto end_attempts; // Break out of the outer 'attempt' loop
         }
+        else
+        {
+            // Ray march MISSED for path/preHitPath.
+            // We need to prepare the DAG traversal state to continue *past* this failed hit.
+            // The 'stack' holds the state of the parents. 'level-1' is the parent of 'path'.
+            // The 'visitMask' in 'stack[level-1]' (which was just used to find 'path')
+            // has already had the bit for 'path' cleared by the `cache.visitMask &= ~(1u << nextChild);`
+            // line *before* `stack[level] = parent_cache_for_stack;`.
+            // So, when the next 'attempt' starts, and if it correctly restores `level`, `path`, `stack`, and `cache`
+            // to the state of the parent of the *just failed* hit, the `next_child` call
+            // should pick the next available sibling.
+
+            // Restore state to the parent of the just-failed hit, so the next iteration
+            // of the outer loop can try the next sibling or ascend.
+            if (level > 0)
+            { // Should always be true if dag_hit_this_attempt was true
+                initial_level_state = level - 1;
+                initial_path_state = preHitPath; // Path of the parent
+                for (int i = 0; i < MAX_LEVELS; ++i)
+                    initial_stack_state[i] = stack[i];  // Save current stack
+                initial_cache_state = stack[level - 1]; // This cache has the updated visitMask for the parent
+            }
+            else
+            {
+                // Should not happen if dag_hit_this_attempt was true.
+                // If it does, implies an issue or that the DAG root itself failed the march.
+                // Treat as no more hits possible.
+                goto end_attempts; // JUMP to the end of all attempts.
+            }
+            // If initial_cache_state.visitMask is 0, the next attempt's ascend logic will handle it.
+        }
+    } // End of outer 'attempt' loop
+
+end_attempts:;
+
+    // Store the final result (could be a smooth hit, or null if all attempts failed)
+    // If 'goto end_attempts' was taken due to a successful ray march, these will be the hit details.
+    // If 'goto end_attempts' was taken due to a total DAG miss, these will be null (or reflect the initial miss).
+    // If the loop completes all attempts without a successful ray_march,
+    // 'final_stored_path' will be from the last failed DAG hit (if any, otherwise null),
+    // and 'final_hit_t' will be -1.0f
+
+    // Ideally, if all attempts fail, final_stored_path should also be null.
+    if (final_hit_t < 0.0f)
+    { // If no smooth hit was ever found after all attempts
+        final_stored_path = Path(0, 0, 0);
+        final_stored_preHitPath = Path(0, 0, 0);
     }
 
-    // stop one step before hitting the final voxel
-    // if (!path.is_null())
-    // {
-    //     path.ascend(1);
-    // }
-
-    path.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.pathsSurface);
-    preHitPath.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.preHitPathsSurface);
+    final_stored_path.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.pathsSurface);
+    final_stored_preHitPath.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.preHitPathsSurface);
 }
 
 template <typename TDAG, typename TDAGColors>
@@ -293,14 +567,143 @@ __global__ void Tracer::trace_colors(const TraceColorsParams traceParams, const 
     if (pixel.x >= imageWidth || pixel.y >= imageHeight)
         return; // outside
 
+    // RECONSTRUCT LIKE IN TRACE_PATHS
+
+    // Pre-calculate per-pixel data
+    // const float3 rayOrigin = make_float3(traceParams.cameraPosition);
+    // const float3 rayDirection = make_float3(normalize(traceParams.rayMin + pixel.x * traceParams.rayDDx + pixel.y * traceParams.rayDDy - traceParams.cameraPosition));
+
+    // const float3 rayDirectionInverse = make_float3(make_double3(1. / rayDirection.x, 1. / rayDirection.y, 1. / rayDirection.z));
+    // const uint8 rayChildOrder =
+    //     (rayDirection.x < 0.f ? 4 : 0) +
+    //     (rayDirection.y < 0.f ? 2 : 0) +
+    //     (rayDirection.z < 0.f ? 1 : 0);
+
     const auto setColorImpl = [&](uint32 color)
     {
         surf2Dwrite(color, traceParams.colorsSurface, (int)sizeof(uint32) * pixel.x, pixel.y, cudaBoundaryModeClamp);
     };
+    // const auto setColorImpl = [&](uint32 color)
+    // {
+    //     surf2Dwrite(color, traceParams.colorsSurface, (int)sizeof(uint32) * pixel.x, imageHeight - 1 - pixel.y, cudaBoundaryModeClamp);
+    // };
 
-    // const Path loadedPreHitPath = Path::load(pixel.x, pixel.y, traceParams.preHitPathsSurface);
-    const Path path = Path::load(pixel.x, pixel.y, traceParams.pathsSurface);
+    // ---------------------- RENDER WHITE GEOMETRY ---------------------------
+    // const Path path = Path::load(pixel.x, pixel.y, traceParams.pathsSurface); // Original hit path
+    // if (path.is_null())
+    // {
+    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f));
+    //     return;
+    // }
+    // else
+    // {
+    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(255, 255, 255) / 255.f));
+    //     return;
+    // }
 
+    // ---------------- DISABLED -----------------------
+    // ---------------- RAY MARCHING TO FIND SMOOTH SURFACE ----------------------
+
+    // // const Path preHitPath = Path::load(pixel.x, pixel.y, traceParams.preHitPathsSurface);
+    // const Path preHitPath = Path::load(pixel.x, imageHeight - 1 - pixel.y, traceParams.preHitPathsSurface);
+
+    // if (preHitPath.is_null())
+    // {
+    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f)); // Background
+    //     return;
+    // }
+
+    // // bounds of prehitpath box
+    // float3 bounds_min = preHitPath.as_position(1);
+    // float3 bounds_max = make_float3(
+    //     bounds_min.x + 2.0f,
+    //     bounds_min.y + 2.0f,
+    //     bounds_min.z + 2.0f);
+
+    // // increase it by 1 voxel so we can find a surface outside a fully filled 8-voxel neighborhood
+    // bounds_min = make_float3(bounds_min.x - 1.0f, bounds_min.y - 1.0f, bounds_min.z - 1.0f);
+    // bounds_max = make_float3(bounds_max.x + 1.0f, bounds_max.y + 1.0f, bounds_max.z + 1.0f);
+
+    // float march_t_start, march_t_end;
+
+    // if (!ray_box_intersect(rayOrigin, rayDirection, rayDirectionInverse,
+    //                        bounds_min, bounds_max,
+    //                        march_t_start, march_t_end))
+    // {
+    //     // Ray completely misses even the expanded marching volume around preHitPath.
+    //     // This should be rare if preHitPath was valid, but possible if preHitPath is near edge of scene.
+    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(1.0f, 0.0f, 1.0f))); // Magenta for miss
+    //     return;
+    // }
+
+    // // ... (after calculating march_t_start and march_t_end, and after ray_box_intersect succeeded) ...
+
+    // float current_t = march_t_start;
+    // // Step size should be less than 1.0 (finest voxel size).
+    // // A smaller step size gives more accuracy but is slower. Start with something reasonable.
+    // float step_size = 0.25f;                                                         // e.g., 1/4 of a voxel
+    // int max_steps = static_cast<int>((march_t_end - march_t_start) / step_size) + 5; // Dynamic max steps + buffer
+    // max_steps = min(max_steps, 100);                                                 // Absolute cap for safety
+
+    // float hit_t = -1.0f;
+    // float density_threshold = 0.5f;
+
+    // float3 current_pos = rayOrigin + current_t * rayDirection;
+    // float prev_density = get_trilinear_density(dag, current_pos);
+
+    // for (int i = 0; i < max_steps; ++i)
+    // {
+    //     current_t += step_size;
+    //     // Check if we've marched beyond our defined end point for this local region
+    //     if (current_t > march_t_end)
+    //     {
+    //         break;
+    //     }
+
+    //     current_pos = rayOrigin + current_t * rayDirection;
+    //     float current_density = get_trilinear_density(dag, current_pos);
+
+    //     // Check for crossing the density threshold
+    //     if ((prev_density < density_threshold && current_density >= density_threshold) ||
+    //         (prev_density >= density_threshold && current_density < density_threshold))
+    //     {
+    //         // We crossed! Refine hit_t using linear interpolation between previous and current sample
+    //         if (abs(current_density - prev_density) > 1e-6f)
+    //         { // Avoid division by zero
+    //             float t_interp_fraction = (density_threshold - prev_density) / (current_density - prev_density);
+    //             hit_t = (current_t - step_size) + t_interp_fraction * step_size;
+    //         }
+    //         else
+    //         {
+    //             hit_t = current_t; // Densities are too close, just take the current one
+    //         }
+    //         break; // Found hit
+    //     }
+    //     prev_density = current_density;
+    // }
+
+    // if (hit_t >= 0.0f)
+    // {
+    //     float3 smoothHitPosition = rayOrigin + hit_t * rayDirection;
+    //     // Visualize the hit position (scaled for visibility)
+    //     setColorImpl(ColorUtils::float3_to_rgb888(
+    //         make_float3(smoothHitPosition.x, smoothHitPosition.y, smoothHitPosition.z) * 0.0001f // Adjust scale as needed
+    //         ));
+    // }
+    // else
+    // {
+    //     // No smooth surface hit within the marching distance
+    //     // For debugging, you could color this differently than the absolute background
+    //     // setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f)); // Background
+
+    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(0.1f, 0.2f, 0.1f))); // Dark green for march miss
+    // }
+    // return; // Stop here for this visualization
+
+    // ------------------------- END RAY MARCHING TO FIND SMOOTH SURFACE ----------------------------
+
+    // Original trace_colors logic (now effectively disabled by the return above)
+    const Path path = Path::load(pixel.x, pixel.y, traceParams.pathsSurface); // Original hit path
     if (path.is_null())
     {
         setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f));

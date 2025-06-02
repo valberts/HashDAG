@@ -482,7 +482,7 @@ void Engine::tick()
         if (state.keys[GLFW_KEY_KP_ADD])
             config.radius++;
 
-        double speed = length(make_double3(dagInfo.boundsAABBMax - dagInfo.boundsAABBMin)) / 100 * dt;
+        double speed = length(make_double3(dagInfo.boundsAABBMax - dagInfo.boundsAABBMin)) / 1000 * dt;
         double rotationSpeed = 2 * dt;
 
         if (state.keys[GLFW_KEY_LEFT_SHIFT])
@@ -620,19 +620,19 @@ void Engine::tick()
     switch (config.currentDag)
     {
     case EDag::BasicDagUncompressedColors:
-        colorsTime = tracer->resolve_colors(basicDag, basicDagUncompressedColors, config.debugColors,
+        colorsTime = tracer->resolve_colors(view, dagInfo, basicDag, basicDagUncompressedColors, config.debugColors,
                                             debugColorsIndexLevel, toolInfo);
         break;
     case EDag::BasicDagCompressedColors:
-        colorsTime = tracer->resolve_colors(basicDag, basicDagCompressedColors, config.debugColors, debugColorsIndexLevel,
+        colorsTime = tracer->resolve_colors(view, dagInfo, basicDag, basicDagCompressedColors, config.debugColors, debugColorsIndexLevel,
                                             toolInfo);
         break;
     case EDag::BasicDagColorErrors:
-        colorsTime = tracer->resolve_colors(basicDag, basicDagColorErrors, config.debugColors,
+        colorsTime = tracer->resolve_colors(view, dagInfo, basicDag, basicDagColorErrors, config.debugColors,
                                             debugColorsIndexLevel, toolInfo);
         break;
     case EDag::HashDag:
-        colorsTime = tracer->resolve_colors(hashDag, hashDagColors, config.debugColors, debugColorsIndexLevel, toolInfo);
+        colorsTime = tracer->resolve_colors(view, dagInfo, hashDag, hashDagColors, config.debugColors, debugColorsIndexLevel, toolInfo);
         break;
     }
     statsRecorder.report("colors", colorsTime);
