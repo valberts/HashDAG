@@ -17,52 +17,113 @@ DEVICE uint8 next_child(uint8 order, uint8 mask)
     return 0;
 }
 
+// template <typename TDAG>
+// DEVICE float get_trilinear_density(const TDAG &dag, float3 world_point)
+// {
+//     // Shift world_point to align interpolation grid with voxel centers
+//     float3 sample_point = world_point - make_float3(0.5f, 0.5f, 0.5f);
+//     // Determine the integer coordinates of the bottom-left-front "anchor" corner
+//     // of the 1x1x1 conceptual cube that sample_point falls within.
+//     float3 floor_sample_point = make_float3(
+//         floorf(sample_point.x), // Use floorf for float, or floor for double
+//         floorf(sample_point.y),
+//         floorf(sample_point.z));
+//     uint3 base_voxel_coord = make_uint3(
+//         static_cast<unsigned int>(floor_sample_point.x),
+//         static_cast<unsigned int>(floor_sample_point.y),
+//         static_cast<unsigned int>(floor_sample_point.z));
+//     // Get occupancy values for the 8 corners of this cell
+//     float V[8];
+//     for (int i = 0; i < 8; ++i)
+//     {
+//         Path cornerPath(make_uint3(
+//             base_voxel_coord.x + ((i & 1) ? 1 : 0),
+//             base_voxel_coord.y + ((i & 2) ? 1 : 0),
+//             base_voxel_coord.z + ((i & 4) ? 1 : 0)));
+//         V[i] = DAGUtils::get_value(dag, cornerPath) ? 1.0f : 0.0f;
+//     }
+//     // Calculate local coordinates (weights) within this 1x1x1 cell
+//     // These are now relative to the corner of the cell containing the shifted sample_point
+//     float3 local_coords = sample_point - floor_sample_point;
+//     // Trilinear interpolation (same formula as before)
+//     float u = local_coords.x;
+//     float v = local_coords.y;
+//     float w = local_coords.z;
+//     float c00 = V[0] * (1 - u) + V[1] * u;
+//     float c10 = V[2] * (1 - u) + V[3] * u;
+//     float c01 = V[4] * (1 - u) + V[5] * u;
+//     float c11 = V[6] * (1 - u) + V[7] * u;
+//     float c0 = c00 * (1 - v) + c10 * v;
+//     float c1 = c01 * (1 - v) + c11 * v;
+//     return c0 * (1 - w) + c1 * w;
+// }
+
+// template <typename TDAG>
+// DEVICE float get_distance(const TDAG &dag, float3 world_point)
+// {
+//     // --- PART 1: Calculate the Signed Distance Field (SDF) ---
+//     const float voxel_radius = 0.5f;
+//     int3 base_voxel_coord = make_int3(
+//         floorf(world_point.x),
+//         floorf(world_point.y),
+//         floorf(world_point.z));
+//     float min_dist = 1e10f;
+//     for (int dz = -1; dz <= 1; dz++)
+//     {
+//         for (int dy = -1; dy <= 1; dy++)
+//         {
+//             for (int dx = -1; dx <= 1; dx++)
+//             {
+//                 int3 check_pos_int = make_int3(base_voxel_coord.x + dx, base_voxel_coord.y + dy, base_voxel_coord.z + dz);
+//                 if (check_pos_int.x < 0 || check_pos_int.y < 0 || check_pos_int.z < 0)
+//                     continue;
+//                 uint3 check_pos = make_uint3(check_pos_int.x, check_pos_int.y, check_pos_int.z);
+//                 Path checkPath(check_pos);
+//                 if (DAGUtils::get_value(dag, checkPath))
+//                 {
+//                     float3 voxel_center = make_float3((float)check_pos.x + 0.5f, (float)check_pos.y + 0.5f, (float)check_pos.z + 0.5f);
+//                     float sphere_dist = length(world_point - voxel_center) - voxel_radius;
+//                     min_dist = fminf(min_dist, sphere_dist);
+//                 }
+//             }
+//         }
+//     }
+//     // return min_dist;
+//     // --- PART 2: Convert SDF Distance to a SHARP Density ---
+//     // (This is the new, simplified part)
+//     // If no voxels were found nearby, return 0 density.
+//     if (min_dist > 1e9f)
+//     {
+//         return 0.0f;
+//     }
+//     // This is the simplest possible conversion:
+//     // If the signed distance is less than or equal to zero, we are inside.
+//     // Otherwise, we are outside.
+//     if (min_dist <= 0.0f)
+//     {
+//         return 1.0f; // Solid
+//     }
+//     else
+//     {
+//         return 0.0f; // Empty
+//     }
+//     // A more compact way to write the same thing (often used on GPUs):
+//     // return (min_dist <= 0.0f) ? 1.0f : 0.0f;
+// }
+
 template <typename TDAG>
-DEVICE float get_trilinear_density(const TDAG &dag, float3 world_point)
+DEVICE float get_distance(const TDAG &dag, float3 world_point, const Path &path)
 {
-    // Shift world_point to align interpolation grid with voxel centers
-    float3 sample_point = world_point - make_float3(0.5f, 0.5f, 0.5f);
+    // Get the world-space integer coordinate of the hit voxel
+    float3 hit_pos = path.as_position(0);
 
-    // Determine the integer coordinates of the bottom-left-front "anchor" corner
-    // of the 1x1x1 conceptual cube that sample_point falls within.
-    float3 floor_sample_point = make_float3(
-        floorf(sample_point.x), // Use floorf for float, or floor for double
-        floorf(sample_point.y),
-        floorf(sample_point.z));
-    uint3 base_voxel_coord = make_uint3(
-        static_cast<unsigned int>(floor_sample_point.x),
-        static_cast<unsigned int>(floor_sample_point.y),
-        static_cast<unsigned int>(floor_sample_point.z));
+    // Calculate the world-space center for that voxel
+    float3 voxel_center = make_float3(hit_pos.x + 0.5f, hit_pos.y + 0.5f, hit_pos.z + 0.5f);
 
-    // Get occupancy values for the 8 corners of this cell
-    float V[8];
-    for (int i = 0; i < 8; ++i)
-    {
-        Path cornerPath(make_uint3(
-            base_voxel_coord.x + ((i & 1) ? 1 : 0),
-            base_voxel_coord.y + ((i & 2) ? 1 : 0),
-            base_voxel_coord.z + ((i & 4) ? 1 : 0)));
-        V[i] = DAGUtils::get_value(dag, cornerPath) ? 1.0f : 0.0f;
-    }
+    // Define the radius of the sphere
+    const float voxel_radius = 0.5f;
 
-    // Calculate local coordinates (weights) within this 1x1x1 cell
-    // These are now relative to the corner of the cell containing the shifted sample_point
-    float3 local_coords = sample_point - floor_sample_point;
-
-    // Trilinear interpolation (same formula as before)
-    float u = local_coords.x;
-    float v = local_coords.y;
-    float w = local_coords.z;
-
-    float c00 = V[0] * (1 - u) + V[1] * u;
-    float c10 = V[2] * (1 - u) + V[3] * u;
-    float c01 = V[4] * (1 - u) + V[5] * u;
-    float c11 = V[6] * (1 - u) + V[7] * u;
-
-    float c0 = c00 * (1 - v) + c10 * v;
-    float c1 = c01 * (1 - v) + c11 * v;
-
-    return c0 * (1 - w) + c1 * w;
+    return length(world_point - voxel_center) - voxel_radius;
 }
 
 DEVICE bool ray_box_intersect(
@@ -108,6 +169,7 @@ DEVICE bool ray_box_intersect(
     //      (If t_exit < 0, the entire intersection is behind the ray).
     return t_entry < t_exit && t_exit >= 0.0f;
 }
+
 template <bool isRoot, typename TDAG>
 DEVICE uint8 compute_intersection_mask(
     uint32 level,
@@ -115,7 +177,8 @@ DEVICE uint8 compute_intersection_mask(
     const TDAG &dag,
     const float3 &rayOrigin,
     const float3 &rayDirection,
-    const float3 &rayDirectionInverted)
+    const float3 &rayDirectionInverted,
+    const float rayThickness = 0.0f)
 {
     // Find node center = .5 * (boundsMin + boundsMax) + .5f
     const uint32 shift = dag.levels - level;
@@ -185,15 +248,15 @@ DEVICE uint8 compute_intersection_mask(
         const float3 pointOnRay = tmid.x * rayDirection;
 
         uint8 A = 0;
-        if (pointOnRay.y >= centerRelativeToRay.y - epsilon)
+        if (pointOnRay.y >= centerRelativeToRay.y - rayThickness - epsilon)
             A |= 0xCC;
-        if (pointOnRay.y <= centerRelativeToRay.y + epsilon)
+        if (pointOnRay.y <= centerRelativeToRay.y + rayThickness + epsilon)
             A |= 0x33;
 
         uint8 B = 0;
-        if (pointOnRay.z >= centerRelativeToRay.z - epsilon)
+        if (pointOnRay.z >= centerRelativeToRay.z - rayThickness - epsilon)
             B |= 0xAA;
-        if (pointOnRay.z <= centerRelativeToRay.z + epsilon)
+        if (pointOnRay.z <= centerRelativeToRay.z + rayThickness + epsilon)
             B |= 0x55;
 
         intersectionMask |= A & B;
@@ -203,15 +266,15 @@ DEVICE uint8 compute_intersection_mask(
         const float3 pointOnRay = tmid.y * rayDirection;
 
         uint8 C = 0;
-        if (pointOnRay.x >= centerRelativeToRay.x - epsilon)
+        if (pointOnRay.x >= centerRelativeToRay.x - rayThickness - epsilon)
             C |= 0xF0;
-        if (pointOnRay.x <= centerRelativeToRay.x + epsilon)
+        if (pointOnRay.x <= centerRelativeToRay.x + rayThickness + epsilon)
             C |= 0x0F;
 
         uint8 D = 0;
-        if (pointOnRay.z >= centerRelativeToRay.z - epsilon)
+        if (pointOnRay.z >= centerRelativeToRay.z - rayThickness - epsilon)
             D |= 0xAA;
-        if (pointOnRay.z <= centerRelativeToRay.z + epsilon)
+        if (pointOnRay.z <= centerRelativeToRay.z + rayThickness + epsilon)
             D |= 0x55;
 
         intersectionMask |= C & D;
@@ -221,15 +284,15 @@ DEVICE uint8 compute_intersection_mask(
         const float3 pointOnRay = tmid.z * rayDirection;
 
         uint8 E = 0;
-        if (pointOnRay.x >= centerRelativeToRay.x - epsilon)
+        if (pointOnRay.x >= centerRelativeToRay.x - rayThickness - epsilon)
             E |= 0xF0;
-        if (pointOnRay.x <= centerRelativeToRay.x + epsilon)
+        if (pointOnRay.x <= centerRelativeToRay.x + rayThickness + epsilon)
             E |= 0x0F;
 
         uint8 F = 0;
-        if (pointOnRay.y >= centerRelativeToRay.y - epsilon)
+        if (pointOnRay.y >= centerRelativeToRay.y - rayThickness - epsilon)
             F |= 0xCC;
-        if (pointOnRay.y <= centerRelativeToRay.y + epsilon)
+        if (pointOnRay.y <= centerRelativeToRay.y + rayThickness + epsilon)
             F |= 0x33;
 
         intersectionMask |= E & F;
@@ -349,6 +412,10 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
             stack[level] = parent_cache_for_stack; // Push parent's state (with its updated visitMask)
             level++;
 
+            // float rayThickness = (level == dag.levels - 1 || level == dag.levels - 2) ? 0.5f : 0.0f;
+            // float rayThickness = (level == dag.levels - 1) ? 0.5f : 0.0f;
+            float rayThickness = 0.0f;
+
             // If we're at the final level, we have intersected a single voxel.
             if (level == dag.levels)
             {
@@ -363,7 +430,7 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
                 // Update cache using parent info from stack entry (stack[level-1])
                 cache.index = dag.get_child_index(level - 1, stack[level - 1].index, stack[level - 1].childMask, nextChild);
                 cache.childMask = Utils::child_mask(dag.get_node(level, cache.index));
-                cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
+                cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse, rayThickness);
             }
             else // in packed leaf levels
             {
@@ -384,20 +451,9 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
                 }
                 // No need to set the index for bottom nodes
                 cache.childMask = childMask_leaf;
-                cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse);
+                cache.visitMask = cache.childMask & compute_intersection_mask<false>(level, path, dag, rayOrigin, rayDirection, rayDirectionInverse, rayThickness);
             }
         } // End of inner DAG traversal loop
-
-        // if (!dag_hit_this_attempt)
-        // {
-        //     // Should have been caught by the ascend logic if no DAG hit possible
-        //     if (attempt == 0)
-        //     {
-        //         final_stored_path = Path(0, 0, 0);
-        //         final_stored_preHitPath = Path(0, 0, 0);
-        //     }
-        //     goto end_attempts;
-        // }
 
         // --------------------- RAY MARCHING ----------------------------
         // The DAG traversal above found a coarse voxel hit (stored in 'path')
@@ -433,63 +489,59 @@ __global__ void Tracer::trace_paths(const TracePathsParams traceParams, const TD
 
         // STEP 3: Initialize Ray Marching Parameters
         // ------------------------------------------
+
         if (can_march)
         {
-            // Start marching from the entry point into the local box.
-            float current_t = march_t_start;
-            float step_size = 0.25f;
-            int max_steps = static_cast<int>((march_t_end - march_t_start) / step_size) + 5;
-            max_steps = min(max_steps, 100);
-            float density_threshold = 0.5f;
-            float3 current_pos_march = rayOrigin + current_t * rayDirection;
-            float prev_density = get_trilinear_density(dag, current_pos_march);
-
-            // STEP 4: March Along the Ray within the Local Box
-            // -----------------------------------------------
-            while (step_size > 0.01f)
+            float current_t = march_t_start + 1e-4f;
+            const int max_march_steps = 100;
+            const float HIT_THRESHOLD = 1e-4f;
+            for (int i = 0; i < max_march_steps; i++)
             {
-                current_t += step_size;
-                if (current_t > march_t_end)
-                {
-                    break;
-                }
-                current_pos_march = rayOrigin + current_t * rayDirection;
-                float current_density = get_trilinear_density(dag, current_pos_march);
-                if (prev_density < density_threshold && current_density >= density_threshold)
+                // if (current_t > march_t_end) {
+                //     break; // Missed the object within the bounds.
+                // }
+                float3 current_pos = rayOrigin + current_t * rayDirection;
+                float dist = get_distance(dag, current_pos, path);
+                if (dist <= HIT_THRESHOLD)
                 {
                     current_hit_t = current_t;
-                    current_t -= step_size;
-                    step_size *= 0.5f;
-                    continue;
+                    break;
                 }
-                prev_density = current_density;
+                // current_t += fmaxf(dist, 1e-5f);
+                current_t += dist;
             }
-            // for (int i = 0; i < max_steps; ++i)
-            // {
-            //     current_t += step_size;
-            //     if (current_t > march_t_end) // outside of bounding box, stop
-            //         break;
-            //     // Get initial density at the starting point of the march.
-            //     current_pos_march = rayOrigin + current_t * rayDirection;
-            //     float current_density = get_trilinear_density(dag, current_pos_march);
-            //     if ((prev_density < density_threshold && current_density >= density_threshold) ||
-            //         (prev_density >= density_threshold && current_density < density_threshold))
-            //     {
-            //         if (abs(current_density - prev_density) > 1e-6f)
-            //         {
-            //             float t_interp_fraction = (density_threshold - prev_density) / (current_density - prev_density);
-            //             current_hit_t = (current_t - step_size) + t_interp_fraction * step_size;
-            //         }
-            //         else
-            //         {
-            //             current_hit_t = current_t;
-            //         }
-            //         // we hit something, stop
-            //         break;
-            //     }
-            //     prev_density = current_density;
-            // }
-        } // end if(can_march)
+        }
+
+        // if (can_march) {
+        //     // Start marching from the entry point into the local box.
+        //     float current_t = march_t_start + 1e-4f;
+        //     float step_size = 0.05f;
+        //     // int max_steps = static_cast<int>((march_t_end - march_t_start) / step_size) + 5;
+        //     // max_steps = min(max_steps, 100);
+        //     float density_threshold = 0.5f;
+        //     float3 current_pos_march = rayOrigin + current_t * rayDirection;
+        //     float prev_density = get_density(dag, current_pos_march);
+        //     // STEP 4: March Along the Ray within the Local Box
+        //     // -----------------------------------------------
+        //     while (step_size > 0.0001f)
+        //     {
+        //         current_t += step_size;
+        //         if (current_t > march_t_end)
+        //         {
+        //             break;
+        //         }
+        //         current_pos_march = rayOrigin + current_t * rayDirection;
+        //         float current_density = get_density(dag, current_pos_march);
+        //         if (prev_density < density_threshold && current_density >= density_threshold)
+        //         {
+        //             current_hit_t = current_t;
+        //             current_t -= step_size;
+        //             step_size *= 0.5f;
+        //             continue;
+        //         }
+        //         prev_density = current_density;
+        //     }
+        // } // end if(can_march)
 
         // STEP 5: Handle Ray Marching Result
         // ----------------------------------
@@ -555,6 +607,7 @@ end_attempts:;
 
     final_stored_path.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.pathsSurface);
     final_stored_preHitPath.store(pixel.x, imageHeight - 1 - pixel.y, traceParams.preHitPathsSurface);
+    surf2Dwrite(final_hit_t, traceParams.hitTSurface, pixel.x * sizeof(float), imageHeight - 1 - pixel.y, cudaBoundaryModeClamp);
 }
 
 template <typename TDAG, typename TDAGColors>
@@ -583,127 +636,47 @@ __global__ void Tracer::trace_colors(const TraceColorsParams traceParams, const 
     {
         surf2Dwrite(color, traceParams.colorsSurface, (int)sizeof(uint32) * pixel.x, pixel.y, cudaBoundaryModeClamp);
     };
-    // const auto setColorImpl = [&](uint32 color)
-    // {
-    //     surf2Dwrite(color, traceParams.colorsSurface, (int)sizeof(uint32) * pixel.x, imageHeight - 1 - pixel.y, cudaBoundaryModeClamp);
-    // };
 
-    // ---------------------- RENDER WHITE GEOMETRY ---------------------------
-    // const Path path = Path::load(pixel.x, pixel.y, traceParams.pathsSurface); // Original hit path
-    // if (path.is_null())
-    // {
-    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f));
-    //     return;
-    // }
-    // else
-    // {
-    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(255, 255, 255) / 255.f));
-    //     return;
-    // }
-
-    // ---------------- DISABLED -----------------------
-    // ---------------- RAY MARCHING TO FIND SMOOTH SURFACE ----------------------
-
-    // // const Path preHitPath = Path::load(pixel.x, pixel.y, traceParams.preHitPathsSurface);
-    // const Path preHitPath = Path::load(pixel.x, imageHeight - 1 - pixel.y, traceParams.preHitPathsSurface);
-
-    // if (preHitPath.is_null())
-    // {
-    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f)); // Background
-    //     return;
-    // }
-
-    // // bounds of prehitpath box
-    // float3 bounds_min = preHitPath.as_position(1);
-    // float3 bounds_max = make_float3(
-    //     bounds_min.x + 2.0f,
-    //     bounds_min.y + 2.0f,
-    //     bounds_min.z + 2.0f);
-
-    // // increase it by 1 voxel so we can find a surface outside a fully filled 8-voxel neighborhood
-    // bounds_min = make_float3(bounds_min.x - 1.0f, bounds_min.y - 1.0f, bounds_min.z - 1.0f);
-    // bounds_max = make_float3(bounds_max.x + 1.0f, bounds_max.y + 1.0f, bounds_max.z + 1.0f);
-
-    // float march_t_start, march_t_end;
-
-    // if (!ray_box_intersect(rayOrigin, rayDirection, rayDirectionInverse,
-    //                        bounds_min, bounds_max,
-    //                        march_t_start, march_t_end))
-    // {
-    //     // Ray completely misses even the expanded marching volume around preHitPath.
-    //     // This should be rare if preHitPath was valid, but possible if preHitPath is near edge of scene.
-    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(1.0f, 0.0f, 1.0f))); // Magenta for miss
-    //     return;
-    // }
-
-    // // ... (after calculating march_t_start and march_t_end, and after ray_box_intersect succeeded) ...
-
-    // float current_t = march_t_start;
-    // // Step size should be less than 1.0 (finest voxel size).
-    // // A smaller step size gives more accuracy but is slower. Start with something reasonable.
-    // float step_size = 0.25f;                                                         // e.g., 1/4 of a voxel
-    // int max_steps = static_cast<int>((march_t_end - march_t_start) / step_size) + 5; // Dynamic max steps + buffer
-    // max_steps = min(max_steps, 100);                                                 // Absolute cap for safety
-
-    // float hit_t = -1.0f;
-    // float density_threshold = 0.5f;
-
-    // float3 current_pos = rayOrigin + current_t * rayDirection;
-    // float prev_density = get_trilinear_density(dag, current_pos);
-
-    // for (int i = 0; i < max_steps; ++i)
-    // {
-    //     current_t += step_size;
-    //     // Check if we've marched beyond our defined end point for this local region
-    //     if (current_t > march_t_end)
-    //     {
-    //         break;
-    //     }
-
-    //     current_pos = rayOrigin + current_t * rayDirection;
-    //     float current_density = get_trilinear_density(dag, current_pos);
-
-    //     // Check for crossing the density threshold
-    //     if ((prev_density < density_threshold && current_density >= density_threshold) ||
-    //         (prev_density >= density_threshold && current_density < density_threshold))
-    //     {
-    //         // We crossed! Refine hit_t using linear interpolation between previous and current sample
-    //         if (abs(current_density - prev_density) > 1e-6f)
-    //         { // Avoid division by zero
-    //             float t_interp_fraction = (density_threshold - prev_density) / (current_density - prev_density);
-    //             hit_t = (current_t - step_size) + t_interp_fraction * step_size;
-    //         }
-    //         else
-    //         {
-    //             hit_t = current_t; // Densities are too close, just take the current one
-    //         }
-    //         break; // Found hit
-    //     }
-    //     prev_density = current_density;
-    // }
-
-    // if (hit_t >= 0.0f)
-    // {
-    //     float3 smoothHitPosition = rayOrigin + hit_t * rayDirection;
-    //     // Visualize the hit position (scaled for visibility)
-    //     setColorImpl(ColorUtils::float3_to_rgb888(
-    //         make_float3(smoothHitPosition.x, smoothHitPosition.y, smoothHitPosition.z) * 0.0001f // Adjust scale as needed
-    //         ));
-    // }
-    // else
-    // {
-    //     // No smooth surface hit within the marching distance
-    //     // For debugging, you could color this differently than the absolute background
-    //     // setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f)); // Background
-
-    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(0.1f, 0.2f, 0.1f))); // Dark green for march miss
-    // }
-    // return; // Stop here for this visualization
-
-    // ------------------------- END RAY MARCHING TO FIND SMOOTH SURFACE ----------------------------
-
-    // Original trace_colors logic (now effectively disabled by the return above)
     const Path path = Path::load(pixel.x, pixel.y, traceParams.pathsSurface); // Original hit path
+
+    // ----------------------------------- DEBUG COLORS -----------------------------------------------
+
+    // const float hit_t = surf2Dread<float>(traceParams.hitTSurface, pixel.x * sizeof(float), pixel.y); // hit t value
+    // if (hit_t < 0.0f) // No hit
+    //{
+    //     setColorImpl(ColorUtils::float3_to_rgb888(make_float3(0.1f, 0.1f, 0.2f))); // Dark blue for miss
+    // }
+    // else
+    //{
+    //     // Normalize hit_t
+    //     const float max_expected_t = 10.0f; //5000.0f
+    //     float normalized_t = clamp(hit_t / max_expected_t, 0.0f, 1.0f);
+    //    // Simple grayscale:
+    //    // float3 color = make_float3(normalized_t, normalized_t, normalized_t);
+    //    // Simple heatmap (blue for near, red for far):
+    //    float r = normalized_t;        // Far = red
+    //    float b = 1.0f - normalized_t; // Near = blue
+    //    float g = 0.0f;
+    //    // A slightly nicer heatmap:
+    //    if (normalized_t < 0.5f)
+    //    { // Blue to Green
+    //        b = 1.0f - (normalized_t * 2.0f);
+    //        g = normalized_t * 2.0f;
+    //        r = 0.0f;
+    //    }
+    //    else
+    //    { // Green to Red
+    //        b = 0.0f;
+    //        g = 1.0f - ((normalized_t - 0.5f) * 2.0f);
+    //        r = (normalized_t - 0.5f) * 2.0f;
+    //    }
+    //    float3 color = make_float3(r, g, b);
+    //    setColorImpl(ColorUtils::float3_to_rgb888(color));
+    //}
+    // return; // Exit after setting debug color
+
+    // ----------------------------------- DEBUG COLORS -----------------------------------------------
+
     if (path.is_null())
     {
         setColorImpl(ColorUtils::float3_to_rgb888(make_float3(187, 242, 250) / 255.f));

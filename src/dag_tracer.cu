@@ -22,6 +22,9 @@ DAGTracer::DAGTracer(bool headLess)
         setupArray(colorsArray, colorsBuffer, 8, 8, 8, 8);
 
         setupArray(preHitPathArray, preHitPathsBuffer, 32, 32, 32, 32);
+
+        // setup hitT
+        setupArray(hitTArray, hitTBuffer, 32, 0, 0, 0); // 32 bit float, R channel
     }
     else
     {
@@ -40,6 +43,8 @@ DAGTracer::DAGTracer(bool headLess)
         setupImage(colorsBuffer, colorsImage, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE);
 
         setupImage(preHitPathsBuffer, preHitPathsImage, GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT);
+        // setup hitT
+        setupImage(hitTBuffer, hitTImage, GL_R32F, GL_RED, GL_FLOAT);
 
         pathCache = Memory::malloc<uint3>("path cache", sizeof(uint3), EMemoryType::GPU_Managed);
     }
@@ -54,15 +59,23 @@ DAGTracer::~DAGTracer()
     {
         pathsBuffer.destroy_surface();
         colorsBuffer.destroy_surface();
+        preHitPathsBuffer.destroy_surface();
+        hitTBuffer.destroy_surface();
         cudaFreeArray(pathArray);
         cudaFreeArray(colorsArray);
+        cudaFreeArray(preHitPathArray);
+        cudaFreeArray(hitTArray);
     }
     else
     {
         pathsBuffer.unregister_resource();
         colorsBuffer.unregister_resource();
+        preHitPathsBuffer.unregister_resource();
+        hitTBuffer.unregister_resource();
         glDeleteTextures(1, &pathsImage);
         glDeleteTextures(1, &colorsImage);
+        glDeleteTextures(1, &preHitPathsImage);
+        glDeleteTextures(1, &hitTImage);
 
         Memory::free(pathCache);
     }
@@ -127,11 +140,13 @@ float DAGTracer::resolve_paths(const CameraView &camera, const DAGInfo &dagInfo,
     {
         pathsBuffer.map_surface();
         preHitPathsBuffer.map_surface();
+        hitTBuffer.map_surface();
     }
 
     auto traceParams = get_trace_params(camera, dag.levels, dagInfo);
     traceParams.pathsSurface = pathsBuffer.cudaSurface;
     traceParams.preHitPathsSurface = preHitPathsBuffer.cudaSurface;
+    traceParams.hitTSurface = hitTBuffer.cudaSurface;
 
     CUDA_CHECK_ERROR();
 
@@ -149,6 +164,7 @@ float DAGTracer::resolve_paths(const CameraView &camera, const DAGInfo &dagInfo,
     {
         pathsBuffer.unmap_surface();
         preHitPathsBuffer.unmap_surface();
+        hitTBuffer.unmap_surface();
     }
     return elapsed;
 }
@@ -164,11 +180,12 @@ float DAGTracer::resolve_colors(const CameraView &camera, const DAGInfo &dagInfo
     const dim3 grid_dim = dim3(imageWidth / block_dim.x + 1, imageHeight / block_dim.y + 1);
 
     if (!headLess)
+    {
         pathsBuffer.map_surface();
-    if (!headLess)
         colorsBuffer.map_surface();
-    if (!headLess)
         preHitPathsBuffer.map_surface();
+        hitTBuffer.map_surface(); // Map hitTBuffer if trace_colors needs it
+    }
 
     Tracer::TraceColorsParams traceParams;
     traceParams.debugColors = debugColors;
@@ -177,6 +194,7 @@ float DAGTracer::resolve_colors(const CameraView &camera, const DAGInfo &dagInfo
     traceParams.pathsSurface = pathsBuffer.cudaSurface;
     traceParams.colorsSurface = colorsBuffer.cudaSurface;
     traceParams.preHitPathsSurface = preHitPathsBuffer.cudaSurface;
+    traceParams.hitTSurface = hitTBuffer.cudaSurface; // Pass hitTSurface
 
     // --- NEW: Populate ray parameters ---
     // Use the get_trace_params helper function, similar to resolve_paths
@@ -202,11 +220,12 @@ float DAGTracer::resolve_colors(const CameraView &camera, const DAGInfo &dagInfo
     CUDA_CHECK_ERROR();
 
     if (!headLess)
+    {
         pathsBuffer.unmap_surface();
-    if (!headLess)
         colorsBuffer.unmap_surface();
-    if (!headLess)
         preHitPathsBuffer.unmap_surface();
+        hitTBuffer.unmap_surface();
+    }
 
     return elapsed;
 }

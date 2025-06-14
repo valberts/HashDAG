@@ -33,6 +33,10 @@ private:
     GLuint colorsImage = 0;
     GLuint preHitPathsImage = 0;
 
+    GLuint hitTImage = 0;           // For OpenGL interop (if displaying/debugging 't' values)
+    cudaArray *hitTArray = nullptr; // For headless mode
+    CudaGLBuffer hitTBuffer;        // Manages CUDA surface object
+
     CudaGLBuffer pathsBuffer;
     CudaGLBuffer colorsBuffer;
 

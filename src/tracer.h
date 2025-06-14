@@ -97,6 +97,7 @@ namespace Tracer
         // Out
         cudaSurfaceObject_t pathsSurface;
         cudaSurfaceObject_t preHitPathsSurface; // one step before hit
+        cudaSurfaceObject_t hitTSurface;        // store t value of hit
     };
 
     template <typename TDAG>
@@ -113,6 +114,8 @@ namespace Tracer
         ToolInfo toolInfo;
 
         cudaSurfaceObject_t pathsSurface;
+        cudaSurfaceObject_t preHitPathsSurface;
+        cudaSurfaceObject_t hitTSurface;
 
         // from TracePathsParams
         double3 cameraPosition;
@@ -122,7 +125,6 @@ namespace Tracer
 
         // Out
         cudaSurfaceObject_t colorsSurface;
-        cudaSurfaceObject_t preHitPathsSurface;
     };
 
     template <typename TDAG, typename TDAGColors>

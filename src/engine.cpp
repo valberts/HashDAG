@@ -410,6 +410,17 @@ void Engine::scroll_callback_impl(double xoffset, double yoffset)
 void Engine::tick()
 {
     PROFILE_FUNCTION();
+    //printf("Loaded DAGInfo Bounds: Min=(%f,%f,%f), Max=(%f,%f,%f)\n",
+    //    Engine::engine.dagInfo.boundsAABBMin.X, Engine::engine.dagInfo.boundsAABBMin.Y, Engine::engine.dagInfo.boundsAABBMin.Z,
+    //    Engine::engine.dagInfo.boundsAABBMax.X, Engine::engine.dagInfo.boundsAABBMax.Y, Engine::engine.dagInfo.boundsAABBMax.Z);
+
+    if (state.keys[GLFW_KEY_KP_0])
+    {
+        Vector3 voxel_center = Vector3(3.5f, 3.5f, 3.5f);
+        view.position = voxel_center - Vector3(0.0f, 0.0f, 5.0f); // 5 units in front of the voxel center
+        view.rotation = Matrix3x3::Identity(); // Keep it simple for now
+        printf("TEMP: Forcing camera view: pos(%.2f, %.2f, %.2f)\n", view.position.X, view.position.Y, view.position.Z);
+    }
 
     frameIndex++;
 
@@ -424,12 +435,12 @@ void Engine::tick()
     // Controls
     if (replayReader.is_empty())
     {
-        if (state.keys[GLFW_KEY_KP_0])
-        {
-            targetView.rotation = {-0.573465, 0.000000, -0.819230, -0.034067, 0.999135, 0.023847, 0.818522, 0.041585, -0.572969};
-            targetView.position = {-13076.174715, -1671.669438, 5849.331627};
-            init_target_lerp();
-        }
+        //if (state.keys[GLFW_KEY_KP_0])
+        //{
+        //    targetView.rotation = {-0.573465, 0.000000, -0.819230, -0.034067, 0.999135, 0.023847, 0.818522, 0.041585, -0.572969};
+        //    targetView.position = {-13076.174715, -1671.669438, 5849.331627};
+        //    init_target_lerp();
+        //}
         if (state.keys[GLFW_KEY_KP_1])
         {
             targetView.rotation = {0.615306, -0.000000, -0.788288, -0.022851, 0.999580, -0.017837, 0.787957, 0.028989, 0.615048};
@@ -482,7 +493,7 @@ void Engine::tick()
         if (state.keys[GLFW_KEY_KP_ADD])
             config.radius++;
 
-        double speed = length(make_double3(dagInfo.boundsAABBMax - dagInfo.boundsAABBMin)) / 1000 * dt;
+        double speed = length(make_double3(dagInfo.boundsAABBMax - dagInfo.boundsAABBMin)) / 100 * dt;
         double rotationSpeed = 2 * dt;
 
         if (state.keys[GLFW_KEY_LEFT_SHIFT])

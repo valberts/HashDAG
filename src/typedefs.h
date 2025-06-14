@@ -22,7 +22,7 @@
 
 #if USE_VIDEO
 #define SCENE_DEPTH 14 // reduced scene depth to 16K
-#define REPLAY_DEPTH 17
+#define REPLAY_DEPTH 14
 #define ENABLE_CHECKS 0
 #elif RECORD_VIDEO
 #define SCENE_DEPTH 17
@@ -265,9 +265,9 @@
  * as part of BMI1. POPCNT has a separate CPUID flag; however, Intel uses AMD's
  * ABM flag to indicate LZCNT support (since LZCNT completes the ABM)". Either
  * way, anything newer than 2008 (Nahelem or Barcelona) is likely to support
- * it. 
+ * it.
  *
- * GCC exposes it as __builtin_popcount(). MSVC (currently not implemented) 
+ * GCC exposes it as __builtin_popcount(). MSVC (currently not implemented)
  * would use either __popcnt() (intrin.h) or _mm_popcnt_u64() (nmmintrin.h)
  *
  * Performance impact: minor (but tends towards a tiny bit faster)
@@ -299,7 +299,7 @@
  * The bloom filters are stored in a separate pool, parallel to the page pool.
  * A single bloom filter adds at the moment 20/128 ≈ 16% memory overhead. If
  * used for non-leaf nodes only, it's possible to reduce this to 8/128 ≈ 6%.
- * 
+ *
  * Right now, for all nodes (including leaf-nodes), the Bloom filter allows
  * skipping of a page about 66% of the time. For non-leaf nodes only, the rate
  * is much higher (but the overall amount of queries is much lower as well).
@@ -311,7 +311,7 @@
 #endif
 
 #if USE_BLOOM_FILTER && (MANUAL_VIRTUAL_MEMORY && !MANUAL_CPU_DATA)
-#	error "USE_BLOOM_FILTER: MANUAL_VIRTUAL_MEMORY and not MANUAL_CPU_DATA: not yet implemented"
+#error "USE_BLOOM_FILTER: MANUAL_VIRTUAL_MEMORY and not MANUAL_CPU_DATA: not yet implemented"
 #endif
 
 /** Config: Use AVX2 intrinsics for computing and evaluating bloom filters
@@ -328,7 +328,7 @@
  */
 #ifndef BLOOM_FILTER_HASHES
 #define BLOOM_FILTER_HASHES 7
-#endif 
+#endif
 
 /** Config: Number of words per Bloom filter
  *
@@ -347,22 +347,21 @@
  */
 #ifndef BLOOM_FILTER_WORDS
 #if BLOOM_FILTER_AVX
-#define BLOOM_FILTER_WORDS (24*(PAGE_SIZE/128))
+#define BLOOM_FILTER_WORDS (24 * (PAGE_SIZE / 128))
 #else
-#define BLOOM_FILTER_WORDS (20*(PAGE_SIZE/128))
+#define BLOOM_FILTER_WORDS (20 * (PAGE_SIZE / 128))
 #endif
 #endif
-
 
 #if BLOOM_FILTER_AVX && (BLOOM_FILTER_WORDS % 8) != 0
-#	error "BLOOM_FILTER_AVX: requires BLOOM_FILTER_WORDS to be a multiple of 8"
+#error "BLOOM_FILTER_AVX: requires BLOOM_FILTER_WORDS to be a multiple of 8"
 #endif
 
 /** Config: Gather stats on the Bloom filter
  *
  * Gathers number of queries and number of hits and prints these on exit.
  * This is mostly useful for debugging the bloom filter.
- * 
+ *
  * (TODO-FIXME)
  */
 #ifndef BLOOM_FILTER_STATS
@@ -389,10 +388,10 @@
 #endif
 
 /** Config: Intialize unallocated page-memory to invalid
- 
+
  * TODO: not yet implemented. In theory not required.
  */
-#ifndef ALTERNATE_NODEFN_INVALID_INIT //TODO
+#ifndef ALTERNATE_NODEFN_INVALID_INIT // TODO
 #define ALTERNATE_NODEFN_INVALID_INIT 0
 #endif
 
@@ -500,7 +499,7 @@
 
 /** Allow applying a swirl to the copy
  */
-#ifndef COPY_CAN_APPLY_SWIRL 
+#ifndef COPY_CAN_APPLY_SWIRL
 #define COPY_CAN_APPLY_SWIRL 1
 #endif
 
@@ -528,15 +527,21 @@
 
 #ifdef _MSC_VER
 #if defined(__CUDA_ARCH__)
-#define DEBUG_BREAK() __threadfence(); asm("trap;")
+#define DEBUG_BREAK() \
+    __threadfence();  \
+    asm("trap;")
 #else
 #define DEBUG_BREAK() __debugbreak()
 #endif
-#define ASSUME(expr) check(expr); __assume(expr);
+#define ASSUME(expr) \
+    check(expr);     \
+    __assume(expr);
 #else
 #include <csignal>
 #if defined(__CUDA_ARCH__)
-#define DEBUG_BREAK() __threadfence(); asm("trap;")
+#define DEBUG_BREAK() \
+    __threadfence();  \
+    asm("trap;")
 #else
 #define DEBUG_BREAK() raise(SIGTRAP)
 #endif
@@ -547,7 +552,7 @@
 #if ENABLE_CHECKS
 #undef NDEBUG
 #endif
-#pragma warning(disable : 4100 4127 4201 4389 4464 4514 4571 4623 4625 4626 4623 4668 4710 4711 4774 4820 5026 5027 5039 5045 )
+#pragma warning(disable : 4100 4127 4201 4389 4464 4514 4571 4623 4625 4626 4623 4668 4710 4711 4774 4820 5026 5027 5039 5045)
 #define _CRT_SECURE_NO_WARNINGS
 #include <intrin.h>
 #define __builtin_popcount __popcnt
@@ -575,7 +580,7 @@
 
 struct TmpIntVector
 {
-	int x, y, z;
+    int x, y, z;
 };
 TmpIntVector blockIdx;
 TmpIntVector blockDim;
@@ -598,40 +603,62 @@ TmpIntVector threadIdx;
 #include <cuda_runtime.h>
 
 #if ENABLE_CHECKS
-#define checkf(expr, msg, ...) if(!(expr)) { printf("Assertion failed " __FILE__ ":%d: %s: " msg "\n", __LINE__, #expr, ##__VA_ARGS__); DEBUG_BREAK(); }
-#define check(expr) if(!(expr)) { printf("Assertion failed " __FILE__ ":%d: %s\n", __LINE__, #expr); DEBUG_BREAK(); }
+#define checkf(expr, msg, ...)                                                                     \
+    if (!(expr))                                                                                   \
+    {                                                                                              \
+        printf("Assertion failed " __FILE__ ":%d: %s: " msg "\n", __LINE__, #expr, ##__VA_ARGS__); \
+        DEBUG_BREAK();                                                                             \
+    }
+#define check(expr)                                                        \
+    if (!(expr))                                                           \
+    {                                                                      \
+        printf("Assertion failed " __FILE__ ":%d: %s\n", __LINE__, #expr); \
+        DEBUG_BREAK();                                                     \
+    }
 #define checkAlways(expr) check(expr)
-#define checkfAlways(expr, msg, ...) checkf(expr,msg,##__VA_ARGS__)
+#define checkfAlways(expr, msg, ...) checkf(expr, msg, ##__VA_ARGS__)
 
 #define checkEqual(a, b) checkf((a) == (b), "As uint64: a = %" PRIu64 "; b = %" PRIu64, uint64(a), uint64(b))
 #define checkInf(a, b) checkf((a) < (b), "As uint64: a = %" PRIu64 "; b = %" PRIu64, uint64(a), uint64(b))
 #define checkInfEqual(a, b) checkf((a) <= (b), "As uint64: a = %" PRIu64 "; b = %" PRIu64, uint64(a), uint64(b))
-__host__ __device__ inline bool __ensure_returns_false(const char* string, int line, const char* expr)
+__host__ __device__ inline bool __ensure_returns_false(const char *string, int line, const char *expr)
 {
-	printf(string, line, expr);
+    printf(string, line, expr);
 #ifndef __CUDA_ARCH__
-	static std::set<std::string> set;
-	if (set.count(string) == 0)
-	{
-		set.insert(string);
-		DEBUG_BREAK();
-	}
+    static std::set<std::string> set;
+    if (set.count(string) == 0)
+    {
+        set.insert(string);
+        DEBUG_BREAK();
+    }
 #endif
-	return false;
+    return false;
 }
 #define ensure(expr) ((expr) || __ensure_returns_false("Ensure failed " __FILE__ ":%d: %s\n", __LINE__, #expr))
 #else
 #define checkf(expr, msg, ...)
 #define check(...)
-#define checkAlways(expr) if(!(expr)) { printf("Assertion failed " __FILE__ ":%d: %s\n", __LINE__, #expr); DEBUG_BREAK(); std::abort(); }
-#define checkfAlways(expr, msg, ...) if(!(expr)) { printf("Assertion failed " __FILE__ ":%d: %s: " msg "\n", __LINE__, #expr,##__VA_ARGS__); DEBUG_BREAK(); std::abort(); }
+#define checkAlways(expr)                                                  \
+    if (!(expr))                                                           \
+    {                                                                      \
+        printf("Assertion failed " __FILE__ ":%d: %s\n", __LINE__, #expr); \
+        DEBUG_BREAK();                                                     \
+        std::abort();                                                      \
+    }
+#define checkfAlways(expr, msg, ...)                                                               \
+    if (!(expr))                                                                                   \
+    {                                                                                              \
+        printf("Assertion failed " __FILE__ ":%d: %s: " msg "\n", __LINE__, #expr, ##__VA_ARGS__); \
+        DEBUG_BREAK();                                                                             \
+        std::abort();                                                                              \
+    }
 #define checkEqual(a, b)
 #define checkInf(a, b)
 #define checkInfEqual(a, b)
 #define ensure(expr) expr
 #endif
 
-#define LOG(msg, ...) printf(msg "\n",##__VA_ARGS__)
+#define LOG(msg, ...) printf(msg "\n", ##__VA_ARGS__)
 
 #if ENABLE_FORCEINLINE
 #ifdef _MSC_VER
@@ -653,13 +680,13 @@ __host__ __device__ inline bool __ensure_returns_false(const char* string, int l
 #define FLATTEN
 #endif
 
-#define HOST           __host__ inline FORCEINLINE FLATTEN
+#define HOST __host__ inline FORCEINLINE FLATTEN
 #define HOST_RECURSIVE __host__ inline
 
-#define DEVICE           __device__ inline FORCEINLINE FLATTEN
+#define DEVICE __device__ inline FORCEINLINE FLATTEN
 #define DEVICE_RECURSIVE __device__ inline
 
-#define HOST_DEVICE           __host__ __device__ inline FORCEINLINE FLATTEN
+#define HOST_DEVICE __host__ __device__ inline FORCEINLINE FLATTEN
 #define HOST_DEVICE_RECURSIVE __host__ __device__ inline
 
 using int8 = std::int8_t;
@@ -691,53 +718,52 @@ constexpr uint32 windowHeight = uint32(imageHeight * windowScale);
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-template<typename T, typename U>
+template <typename T, typename U>
 HOST_DEVICE T cast(U value)
 {
-	static_assert(std::numeric_limits<T>::max() <= std::numeric_limits<int64>::max(), "invalid cast");
-	checkf(
-		int64(std::numeric_limits<T>::min()) <= int64(value) && int64(value) <= int64(std::numeric_limits<T>::max()),
-		"overflow: %" PRIi64 " not in [%" PRIi64 ", %" PRIi64 "]",
-		int64(value),
-		int64(std::numeric_limits<T>::min()), int64(std::numeric_limits<T>::max()));
-	return T(value);
+    static_assert(std::numeric_limits<T>::max() <= std::numeric_limits<int64>::max(), "invalid cast");
+    checkf(
+        int64(std::numeric_limits<T>::min()) <= int64(value) && int64(value) <= int64(std::numeric_limits<T>::max()),
+        "overflow: %" PRIi64 " not in [%" PRIi64 ", %" PRIi64 "]",
+        int64(value),
+        int64(std::numeric_limits<T>::min()), int64(std::numeric_limits<T>::max()));
+    return T(value);
 }
 
-template<uint8 Bits, typename Enable = void>
+template <uint8 Bits, typename Enable = void>
 struct TypeForBits;
 
-template<uint8 Bits>
+template <uint8 Bits>
 struct TypeForBits<Bits, typename std::enable_if<0 < Bits && Bits <= 8>::type>
 {
-	typedef uint8 Type;
+    typedef uint8 Type;
 };
-template<uint8 Bits>
+template <uint8 Bits>
 struct TypeForBits<Bits, typename std::enable_if<8 < Bits && Bits <= 16>::type>
 {
-	typedef uint16 Type;
+    typedef uint16 Type;
 };
-template<uint8 Bits>
+template <uint8 Bits>
 struct TypeForBits<Bits, typename std::enable_if<16 < Bits && Bits <= 32>::type>
 {
-	typedef uint32 Type;
+    typedef uint32 Type;
 };
-template<uint8 Bits>
+template <uint8 Bits>
 struct TypeForBits<Bits, typename std::enable_if<32 < Bits && Bits <= 64>::type>
 {
-	typedef uint64 Type;
+    typedef uint64 Type;
 };
 
-
-template<uint8 Bits, typename U>
+template <uint8 Bits, typename U>
 HOST_DEVICE typename TypeForBits<Bits>::Type cast_bits(U value)
 {
-	static_assert(std::numeric_limits<U>::min() == 0, "invalid cast");
-	checkf(
-		value < (uint64(1) << Bits),
-		"overflow: %" PRIu64 " not in [%" PRIu64 ", %" PRIu64 "]",
-		uint64(value),
-		uint64(0), (uint64(1) << Bits) - 1);
-	return static_cast<typename TypeForBits<Bits>::Type>(value);
+    static_assert(std::numeric_limits<U>::min() == 0, "invalid cast");
+    checkf(
+        value < (uint64(1) << Bits),
+        "overflow: %" PRIu64 " not in [%" PRIu64 ", %" PRIu64 "]",
+        uint64(value),
+        uint64(0), (uint64(1) << Bits) - 1);
+    return static_cast<typename TypeForBits<Bits>::Type>(value);
 }
 
 #define COLOR_BLACK 0x000000
@@ -757,25 +783,25 @@ HOST_DEVICE typename TypeForBits<Bits>::Type cast_bits(U value)
 #if defined(TRACY_ENABLE) && (!BENCHMARK || FORCE_ENABLE_TRACY)
 #include "Tracy.hpp"
 
-#define PROFILE_SCOPEF(Format, ...) \
-	ZoneScoped; \
-	{ \
-		char __String[1024]; \
-		const int32 __Size = sprintf(__String, Format, ##__VA_ARGS__); \
-		checkInfEqual(__Size, 1024); \
-		ZoneName(__String, __Size); \
-	}
+#define PROFILE_SCOPEF(Format, ...)                                    \
+    ZoneScoped;                                                        \
+    {                                                                  \
+        char __String[1024];                                           \
+        const int32 __Size = sprintf(__String, Format, ##__VA_ARGS__); \
+        checkInfEqual(__Size, 1024);                                   \
+        ZoneName(__String, __Size);                                    \
+    }
 #define PROFILE_SCOPE(Name) ZoneScopedN(Name)
 #define PROFILE_FUNCTION() ZoneScoped
 
 #define ZONE_COLOR(Color) ZoneScopedC(Color)
-#define ZONE_METADATA(Format, ...) \
-	{ \
-		char __String[1024]; \
-		const int32 __Size = sprintf(__String, Format, ##__VA_ARGS__); \
-		checkInfEqual(__Size, 1024); \
-		ZoneText(__String, __Size); \
-	}
+#define ZONE_METADATA(Format, ...)                                     \
+    {                                                                  \
+        char __String[1024];                                           \
+        const int32 __Size = sprintf(__String, Format, ##__VA_ARGS__); \
+        checkInfEqual(__Size, 1024);                                   \
+        ZoneText(__String, __Size);                                    \
+    }
 
 #define MARK(Name) FrameMarkNamed(Name)
 #define MARK_FRAME() FrameMark

@@ -25,7 +25,35 @@ int main(int argc, char **argv)
     printf("IMAGE RESOLUTION: %ux%u\n", imageWidth, imageHeight);
 
     /// get proper filename
-    const std::string fileName = std::string(SCENE) + std::to_string(1 << (SCENE_DEPTH - 10)) + "k";
+    std::string depth_suffix;
+    if (SCENE_DEPTH >= 10) {
+        int shift_val = SCENE_DEPTH - 10;
+        // The check SCENE_DEPTH >= 10 already ensures shift_val >= 0.
+        // Also ensure it's not too large for a 32-bit unsigned shift (typically < 32).
+        // SCENE_DEPTH is unlikely to be >= 42, so SCENE_DEPTH - 10 < 32 is probable.
+        if (shift_val >= 0 && shift_val < 32) { // Defensive check
+            depth_suffix = std::to_string(1u << shift_val) + "k";
+        }
+        else {
+            // Handle unexpected SCENE_DEPTH value for this branch, e.g., if SCENE_DEPTH was massive
+            // This case should ideally not be hit if SCENE_DEPTH is within reasonable octree depth limits.
+            checkf(false, "Unexpected SCENE_DEPTH %d for filename generation (>=10 branch)", SCENE_DEPTH);
+            depth_suffix = "error_depth_k"; // Fallback
+        }
+    }
+    else { // SCENE_DEPTH < 10
+        // SCENE_DEPTH is expected to be < 32 and positive here.
+        if (SCENE_DEPTH >= 0 && SCENE_DEPTH < 32) { // Defensive check
+            depth_suffix = std::to_string(1u << SCENE_DEPTH);
+        }
+        else {
+            // Handle unexpected SCENE_DEPTH value for this branch
+            checkf(false, "Unexpected SCENE_DEPTH %d for filename generation (<10 branch)", SCENE_DEPTH);
+            depth_suffix = "error_depth"; // Fallback
+        }
+    }
+    const std::string fileName = std::string(SCENE) + depth_suffix;
+    //const std::string fileName = std::string(SCENE) + std::to_string(1 << (SCENE_DEPTH - 10)) + "k";
 
     /// Load uncompressed color data if enabled.
     if (LOAD_UNCOMPRESSED_COLORS)
